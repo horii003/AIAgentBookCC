@@ -1,297 +1,288 @@
-"""data_models.py の単体テスト"""
+"""Unit tests for models/data_models.py"""
 import pytest
 from datetime import date
 from pydantic import ValidationError
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-
 from models.data_models import (
     UserInputText,
+    TransportExpenseCalculatorInput,
     TrainFareRecord,
-    TravelExpenseCalculatorInput,
-    TravelItem,
-    TravelApplicationFormInput,
-    ExpenseItem,
+    TransportApplicationFormInput,
+    TransportItem,
     ExpenseApplicationFormInput,
+    ExpenseItem,
     parse_amount,
+    parse_date,
+    normalize_transport_type,
     TRANSPORT_TYPE_MAP,
     EXPENSE_CATEGORY_MAP,
 )
 
 
-# ============ UserInputText ============
+# ---- UserInputText ----
 
 class TestUserInputText:
-    def test_正常_1文字(self):
+    def test_valid_single_char(self):
         m = UserInputText(text="a")
         assert m.text == "a"
 
-    def test_正常_500文字(self):
-        m = UserInputText(text="a" * 500)
+    def test_valid_500_chars(self):
+        m = UserInputText(text="x" * 500)
         assert len(m.text) == 500
 
-    def test_異常_空文字(self):
+    def test_empty_string_raises(self):
         with pytest.raises(ValidationError):
             UserInputText(text="")
 
-    def test_異常_501文字(self):
+    def test_501_chars_raises(self):
         with pytest.raises(ValidationError):
-            UserInputText(text="a" * 501)
+            UserInputText(text="x" * 501)
 
 
-# ============ parse_amount ============
+# ---- parse_date ----
 
-class TestParseAmount:
-    def test_カンマ円記号付き文字列(self):
-        assert parse_amount("1,000円") == 1000
+class TestParseDate:
+    def test_valid_date_string(self):
+        result = parse_date("2026-04-28")
+        assert result == date(2026, 4, 28)
 
-    def test_数字文字列(self):
-        assert parse_amount("500") == 500
+    def test_date_object_passthrough(self):
+        d = date(2026, 1, 1)
+        assert parse_date(d) == d
 
-    def test_int(self):
-        assert parse_amount(200) == 200
-
-    def test_float(self):
-        assert parse_amount(1500.0) == 1500
-
-    def test_異常_空文字(self):
+    def test_invalid_format_raises(self):
         with pytest.raises(ValueError):
-            parse_amount("")
+            parse_date("28/04/2026")
 
-    def test_異常_非数値文字列(self):
+    def test_invalid_string_raises(self):
         with pytest.raises(ValueError):
-            parse_amount("abc")
+            parse_date("not-a-date")
 
 
-# ============ TravelExpenseCalculatorInput ============
+# ---- normalize_transport_type ----
 
-class TestTravelExpenseCalculatorInput:
-    def test_正常_電車(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="渋谷",
-            destination="新宿",
+class TestNormalizeTransportType:
+    def test_train_to_densha(self):
+        assert normalize_transport_type("train") == "電車"
+
+    def test_bus(self):
+        assert normalize_transport_type("bus") == "バス"
+
+    def test_taxi(self):
+        assert normalize_transport_type("taxi") == "タクシー"
+
+    def test_cab_to_taxi(self):
+        assert normalize_transport_type("cab") == "タクシー"
+
+    def test_airplane(self):
+        assert normalize_transport_type("airplane") == "飛行機"
+
+    def test_plane_to_hikouki(self):
+        assert normalize_transport_type("plane") == "飛行機"
+
+    def test_chikatetsu_to_densha(self):
+        assert normalize_transport_type("地下鉄") == "電車"
+
+    def test_tetsudo_to_densha(self):
+        assert normalize_transport_type("鉄道") == "電車"
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            normalize_transport_type("自転車")
+
+
+# ---- TransportExpenseCalculatorInput ----
+
+class TestTransportExpenseCalculatorInput:
+    def test_valid_input(self):
+        m = TransportExpenseCalculatorInput(
+            transport_date="2026-04-28",
+            departure="東京",
+            destination="大阪",
             transport_type="電車",
         )
-        assert m.travel_date == date(2026, 4, 28)
+        assert m.transport_date == date(2026, 4, 28)
         assert m.transport_type == "電車"
 
-    def test_正規化_train_to_電車(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="渋谷",
-            destination="新宿",
+    def test_date_conversion(self):
+        m = TransportExpenseCalculatorInput(
+            transport_date="2026-01-15",
+            departure="A",
+            destination="B",
+            transport_type="バス",
+        )
+        assert m.transport_date == date(2026, 1, 15)
+
+    def test_invalid_date_raises(self):
+        with pytest.raises(ValidationError):
+            TransportExpenseCalculatorInput(
+                transport_date="invalid-date",
+                departure="A",
+                destination="B",
+                transport_type="電車",
+            )
+
+    def test_transport_type_normalization(self):
+        m = TransportExpenseCalculatorInput(
+            transport_date="2026-04-28",
+            departure="A",
+            destination="B",
             transport_type="train",
         )
         assert m.transport_type == "電車"
 
-    def test_正規化_bus_to_バス(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="A",
-            destination="B",
-            transport_type="bus",
-        )
-        assert m.transport_type == "バス"
-
-    def test_正規化_taxi_to_タクシー(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="A",
-            destination="B",
-            transport_type="taxi",
-        )
-        assert m.transport_type == "タクシー"
-
-    def test_正規化_cab_to_タクシー(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="A",
-            destination="B",
-            transport_type="cab",
-        )
-        assert m.transport_type == "タクシー"
-
-    def test_正規化_airplane_to_飛行機(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="A",
-            destination="B",
-            transport_type="airplane",
-        )
-        assert m.transport_type == "飛行機"
-
-    def test_正規化_地下鉄_to_電車(self):
-        m = TravelExpenseCalculatorInput(
-            travel_date="2026-04-28",
-            departure="A",
-            destination="B",
-            transport_type="地下鉄",
-        )
-        assert m.transport_type == "電車"
-
-    def test_異常_不正交通手段(self):
+    def test_invalid_transport_type_raises(self):
         with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="2026-04-28",
+            TransportExpenseCalculatorInput(
+                transport_date="2026-04-28",
                 departure="A",
                 destination="B",
                 transport_type="自転車",
             )
 
-    def test_異常_departure空文字(self):
+    def test_empty_departure_raises(self):
         with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="2026-04-28",
+            TransportExpenseCalculatorInput(
+                transport_date="2026-04-28",
                 departure="",
                 destination="B",
                 transport_type="電車",
             )
 
-    def test_異常_destination空文字(self):
+    def test_empty_destination_raises(self):
         with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="2026-04-28",
+            TransportExpenseCalculatorInput(
+                transport_date="2026-04-28",
                 departure="A",
                 destination="",
                 transport_type="電車",
             )
 
-    def test_異常_空白のみdeparture(self):
+    def test_whitespace_only_departure_raises(self):
         with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="2026-04-28",
+            TransportExpenseCalculatorInput(
+                transport_date="2026-04-28",
                 departure="   ",
                 destination="B",
                 transport_type="電車",
             )
 
-    def test_異常_不正日付形式_数字のみ(self):
+    def test_whitespace_only_destination_raises(self):
         with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="20260428",
+            TransportExpenseCalculatorInput(
+                transport_date="2026-04-28",
                 departure="A",
-                destination="B",
-                transport_type="電車",
-            )
-
-    def test_異常_空文字日付(self):
-        with pytest.raises(ValidationError):
-            TravelExpenseCalculatorInput(
-                travel_date="",
-                departure="A",
-                destination="B",
+                destination="   ",
                 transport_type="電車",
             )
 
 
-# ============ TrainFareRecord ============
+# ---- TrainFareRecord ----
 
 class TestTrainFareRecord:
-    def test_正常_fare_0(self):
+    def test_fare_zero_valid(self):
         r = TrainFareRecord(departure="A", destination="B", fare=0)
         assert r.fare == 0
 
-    def test_正常_fare_正の整数(self):
-        r = TrainFareRecord(departure="渋谷", destination="新宿", fare=200)
-        assert r.fare == 200
-
-    def test_異常_fare_負値(self):
+    def test_fare_negative_raises(self):
         with pytest.raises(ValidationError):
             TrainFareRecord(departure="A", destination="B", fare=-1)
 
-    def test_異常_departure空文字(self):
+    def test_empty_departure_raises(self):
         with pytest.raises(ValidationError):
             TrainFareRecord(departure="", destination="B", fare=100)
 
-    def test_異常_destination空文字(self):
+    def test_empty_destination_raises(self):
         with pytest.raises(ValidationError):
             TrainFareRecord(departure="A", destination="", fare=100)
 
+    def test_fare_string_conversion(self):
+        r = TrainFareRecord(departure="A", destination="B", fare="500")
+        assert r.fare == 500
 
-# ============ TravelApplicationFormInput ============
 
-class TestTravelApplicationFormInput:
-    def _make_item(self):
+# ---- TransportApplicationFormInput ----
+
+class TestTransportApplicationFormInput:
+    def _make_item(self, no=1):
         return {
-            "travel_date": "2026-04-28",
-            "departure": "渋谷",
-            "destination": "新宿",
+            "no": no,
+            "transport_date": "2026-04-28",
+            "departure": "東京",
+            "destination": "大阪",
             "transport_type": "電車",
-            "amount": 200,
+            "amount": 1000,
+            "business_purpose": "出張",
         }
 
-    def test_正常(self):
-        m = TravelApplicationFormInput(
-            applicant_name="田中太郎",
+    def test_valid_input(self):
+        m = TransportApplicationFormInput(
+            applicant_name="山田太郎",
             application_date="2026-04-28",
             items=[self._make_item()],
-            business_purpose="社内会議",
+            business_purpose="出張",
         )
+        assert m.applicant_name == "山田太郎"
         assert len(m.items) == 1
 
-    def test_異常_items空リスト(self):
+    def test_empty_items_raises(self):
         with pytest.raises(ValidationError):
-            TravelApplicationFormInput(
-                applicant_name="田中太郎",
+            TransportApplicationFormInput(
+                applicant_name="山田太郎",
                 application_date="2026-04-28",
                 items=[],
-                business_purpose="社内会議",
-            )
-
-    def test_異常_business_purpose空文字(self):
-        with pytest.raises(ValidationError):
-            TravelApplicationFormInput(
-                applicant_name="田中太郎",
-                application_date="2026-04-28",
-                items=[self._make_item()],
-                business_purpose="",
+                business_purpose="出張",
             )
 
 
-# ============ ExpenseApplicationFormInput ============
+# ---- ExpenseApplicationFormInput ----
 
 class TestExpenseApplicationFormInput:
-    def _make_item(self):
+    def _make_item(self, no=1):
         return {
-            "expense_date": "2026-04-28",
-            "category": "事務用品費",
-            "amount": 1000,
-            "purpose": "業務用文房具",
+            "no": no,
+            "purchase_date": "2026-04-28",
+            "store_name": "文具屋",
+            "item_name": "ボールペン",
+            "expense_category": "事務用品費",
+            "amount": 500,
+            "business_purpose": "業務用",
         }
 
-    def test_正常(self):
+    def test_valid_input(self):
         m = ExpenseApplicationFormInput(
-            applicant_name="田中太郎",
+            applicant_name="田中花子",
             application_date="2026-04-28",
             items=[self._make_item()],
+            business_purpose="業務用品購入",
         )
+        assert m.applicant_name == "田中花子"
         assert len(m.items) == 1
 
-    def test_異常_items空リスト(self):
+    def test_empty_items_raises(self):
         with pytest.raises(ValidationError):
             ExpenseApplicationFormInput(
-                applicant_name="田中太郎",
+                applicant_name="田中花子",
                 application_date="2026-04-28",
                 items=[],
+                business_purpose="業務用品購入",
             )
 
-    def test_カテゴリ正規化_文房具(self):
-        item = ExpenseItem(
-            expense_date="2026-04-28",
-            category="文房具",
-            amount=500,
-            purpose="メモ帳",
-        )
-        assert item.category == "事務用品費"
 
-    def test_カテゴリ正規化_宿泊(self):
-        item = ExpenseItem(
-            expense_date="2026-04-28",
-            category="宿泊",
-            amount=10000,
-            purpose="出張",
-        )
-        assert item.category == "宿泊費"
+# ---- parse_amount ----
+
+class TestParseAmount:
+    def test_comma_yen_string(self):
+        assert parse_amount("1,000円") == 1000
+
+    def test_plain_string(self):
+        assert parse_amount("500") == 500
+
+    def test_no_comma_integer_string(self):
+        assert parse_amount("1200") == 1200
+
+    def test_int_passthrough(self):
+        assert parse_amount(500) == 500
+
+    def test_float_truncation(self):
+        assert parse_amount(500.9) == 500

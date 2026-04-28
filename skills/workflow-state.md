@@ -27,7 +27,7 @@
 | 03_system-design | ✅ 完了 | 第1周 | ✅ 合格 | 2026-04-28 完了 |
 | 04_basic-design | ✅ 完了 | 第1周 | ✅ 合格 | 2026-04-28 完了 |
 | 05_detailed-design | ✅ 完了 | 第1周 | ✅ 合格 | 2026-04-28 完了 |
-| 06_code-generation | ✅ 完了 | 第1周 | ✅ 合格 | 2026-04-28 完了（162テスト全件パス） |
+| 06_code-generation | ✅ 完了 | 第1周 | ✅ 合格 | 2026-04-28 完了 |
 
 
 
@@ -113,26 +113,24 @@
 | 成果物 | 状態 | 備考 |
 |---|---|---|
 | tasks.md | ✅ 完了（2026-04-28） | |
-| models/data_models.py | ✅ 完了（2026-04-28） | タスク01 |
-| config/model_config.py | ✅ 完了（2026-04-28） | タスク02 |
-| handlers/exceptions.py | ✅ 完了（2026-04-28） | タスク03 |
-| handlers/error_handler.py | ✅ 完了（2026-04-28） | タスク03 |
-| handlers/hooks.py (LoopControlHook) | ✅ 完了（2026-04-28） | タスク04 |
-| handlers/hooks.py (HumanApprovalHook) | ✅ 完了（2026-04-28） | タスク05 |
-| session/session_manager.py | ✅ 完了（2026-04-28） | タスク06 |
-| prompt/prompt_orchestrator.py | ✅ 完了（2026-04-28） | タスク07 |
-| prompt/prompt_travel.py | ✅ 完了（2026-04-28） | タスク08a |
-| prompt/prompt_expense.py | ✅ 完了（2026-04-28） | タスク08b |
-| agent_knowledge/transportation_policies.py | ✅ 完了（2026-04-28） | タスク09a |
-| agent_knowledge/receipt_policies.py | ✅ 完了（2026-04-28） | タスク09b |
-| tools/travel_tools.py | ✅ 完了（2026-04-28） | タスク10a |
-| tools/output_generator.py | ✅ 完了（2026-04-28） | タスク10b |
-| agents/orchestrator_agent.py | ✅ 完了（2026-04-28） | タスク11 |
-| agents/travel_agent.py | ✅ 完了（2026-04-28） | タスク12a |
-| agents/expense_agent.py | ✅ 完了（2026-04-28） | タスク12b |
-| main.py | ✅ 完了（2026-04-28） | タスク13 |
-| data/templates/ (各データファイル) | ✅ 完了（2026-04-28） | タスク14 |
-| tests/integration/test_agent_integration.py | ✅ 完了（2026-04-28） | タスク15・162テスト全件パス |
+| models/data_models.py | ✅ 完了（2026-04-28） | |
+| config/model_config.py | ✅ 完了（2026-04-28） | |
+| handlers/error_handler.py | ✅ 完了（2026-04-28） | |
+| handlers/exceptions.py | ✅ 完了（2026-04-28） | |
+| hooks/loop_control_hook.py | ✅ 完了（2026-04-28） | |
+| hooks/human_approval_hook.py | ✅ 完了（2026-04-28） | |
+| session/session_manager.py | ✅ 完了（2026-04-28） | |
+| prompts/orchestrator_prompt.py | ✅ 完了（2026-04-28） | |
+| agent_knowledge/transportation_policies.py | ✅ 完了（2026-04-28） | |
+| agent_knowledge/receipt_policies.py | ✅ 完了（2026-04-28） | |
+| tools/transport_tools.py | ✅ 完了（2026-04-28） | |
+| tools/output_generator.py | ✅ 完了（2026-04-28） | |
+| agents/orchestrator_agent.py | ✅ 完了（2026-04-28） | |
+| agents/transport_agent.py | ✅ 完了（2026-04-28） | |
+| agents/expense_agent.py | ✅ 完了（2026-04-28） | |
+| main.py | ✅ 完了（2026-04-28） | |
+| データファイル・テンプレート配置 | ✅ 完了（2026-04-28） | |
+| テストコード（単体・結合） | ✅ 完了（2026-04-28） | 237テスト全件パス |
 
 ---
 

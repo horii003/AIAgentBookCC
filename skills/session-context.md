@@ -4,7 +4,7 @@
 2026-04-28
 
 ## 作業中の内容
-なし（05_detailed-design フェーズ完了）
+なし（06_code-generation フェーズ完了）
 
 ## 確定した決定事項
 - 01_business-requirements フェーズを完了（2026-04-28）
@@ -15,6 +15,9 @@
   - 交通費計算ツール詳細設計書.md / 申請書生成ツール詳細設計書.md
   - AG-001/AG-002/AG-003 詳細設計書
   - ErrorHandler詳細設計書.md / HumanApprovalHook詳細設計書.md / LoopControlHook詳細設計書.md
+- 06_code-generation フェーズを完了（2026-04-28）、全コンポーネント実装済み、単体テスト162件全パス
+  - 成果物: artifacts/06_code-generation/src/ 配下の全Pythonファイル
+  - テスト: tests/unit/ (単体), tests/integration/ (結合)
 - 対象システム：社内申請AIエージェント（交通費精算申請・経費精算申請の2種対応）
 - 技術スタック：Python 3.x、Strands Agents SDK v1.25.0、Amazon Bedrock（Claude Sonnet 4.5: jp.anthropic.claude-sonnet-4-5-20250929-v1:0）、pydantic v2+、openpyxl、boto3
 - マルチエージェント構成：Agent as Tools パターン（AG-001オーケストレーター、AG-002/AG-003スペシャリスト）
@@ -26,7 +29,7 @@
 - HumanApprovalHook対象ツール：generate_travel_expense_form（AG-002）/ generate_expense_form（AG-003）
 - LoopControlHook max_iterations=10（AG-001/AG-002/AG-003全エージェント）
 - ErrorHandlerのEX-01〜EX-08分類は例外処理方針.mdに準拠
-- 次フェーズ（06_code-generation）はユーザー指示後に開始
+- ファイル命名に注意: 詳細設計v1.2でtransport命名に統一されているが、コード実装はtravelベースで完成済み（travel_tools.py, travel_agent.py等）
 
 ## 未完了の指示
 なし

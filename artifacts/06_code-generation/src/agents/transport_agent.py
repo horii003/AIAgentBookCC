@@ -1,6 +1,6 @@
-"""経費精算申請エージェント（AG-003）
+"""交通費精算申請エージェント（AG-002）
 
-AG-001からの委任を受けて経費精算申請フロー全体を実行する。
+AG-001からの委任を受けて交通費精算申請フロー全体を実行する。
 """
 import logging
 from datetime import date
@@ -12,16 +12,17 @@ from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.session.file_session_manager import FileSessionManager
 from strands.types.exceptions import ContextWindowOverflowException, MaxTokensReachedException
 
-from agent_knowledge import receipt_policies as rp
+from agent_knowledge import transportation_policies as tp
 from config.model_config import ModelConfig
 from handlers.error_handler import ErrorHandler
 from handlers.exceptions import LoopLimitError
 from hooks.human_approval_hook import HumanApprovalHook
 from hooks.loop_control_hook import LoopControlHook
-from tools.output_generator import generate_expense_form
+from tools.output_generator import generate_transport_expense_form
+from tools.transport_tools import calculate_transport_expense
 
 _logger = logging.getLogger(__name__)
-_expense_agent_instances: Dict[str, Agent] = {}
+_transport_agent_instances: Dict[str, Agent] = {}
 
 
 def _mask_applicant_name(name: str) -> str:
@@ -38,11 +39,11 @@ def _is_valid_date(date_str: str) -> bool:
         return False
 
 
-def _build_expense_agent_system_prompt(
+def _build_transport_agent_system_prompt(
     application_date: str,
     deadline_months: int,
     manager_approval_threshold: int,
-    expense_categories: list,
+    allowed_transport_types: list,
 ) -> str:
     try:
         app_date = date.fromisoformat(application_date)
@@ -50,78 +51,67 @@ def _build_expense_agent_system_prompt(
     except (ValueError, TypeError):
         deadline_date = ""
 
-    categories_str = "・".join(expense_categories)
-    return f"""あなたは社内申請AIシステムの「経費精算申請エージェント」です。
+    types_str = "・".join(allowed_transport_types)
+    return f"""あなたは社内申請AIシステムの「交通費精算申請エージェント」です。
 申請者名と申請日はすでに設定済みです（invocation_stateから取得しています）。
 申請日（application_date）: {application_date}
-申請期限基準日（この日付以降の経費発生日のみ申請可能）: {deadline_date}
+申請期限基準日（この日付以降の移動日のみ申請可能）: {deadline_date}
 
-【申請バリデーションルール（agent_knowledge/receipt_policies.py より）】
-- 申請期限: 経費発生日から{deadline_months}ヶ月以内
-- 上長承認が必要な閾値: 経費合計 {manager_approval_threshold}円超
-- 経費区分: {categories_str}
+【申請バリデーションルール（agent_knowledge/transportation_policies.py より）】
+- 申請期限: 移動日から{deadline_months}ヶ月以内
+- 上長承認が必要な閾値: 交通費合計 {manager_approval_threshold}円超
+- 対応交通手段: {types_str}
 
 【あなたの役割】
-経費精算申請フロー全体（領収書読み取り・経費情報収集・経費区分判断・申請書生成・ルールチェック・最終提示）を担当します。
-TOOL-001（交通費計算ツール）は使用しません。
+交通費精算申請フロー全体（移動情報収集・運賃計算・申請書生成・ルールチェック・最終提示）を担当します。
 
 【処理フロー】
-1. 領収書画像を受け取る（CF-004 Step 1-2）
-   - ユーザーへ領収書画像の提出を促す（提出しない場合は「スキップ」と入力してもらう）
-   - 画像が提出された場合：店舗名・金額・日付・品目を読み取る（BRL-16）
-     - 読み取り成功：読み取り結果をユーザーへ提示し確認を取る
-     - 読み取り失敗：Step 4（手動入力）へ遷移する
-   - 画像が提出されない場合（「スキップ」等）：Step 4（手動入力）へ遷移する
+1. 移動情報を一区間ずつ一括入力形式で収集する（BRL-11）
+   - 1区間分の移動日・出発地・目的地・交通手段をまとめて入力するよう促す
+   - 入力後に内容を確認し、次の区間収集または次ステップへ進む
+   - 駅名は正規形に変換してからTOOL-001に渡す（BRL-15）
+   - TOOL-001（calculate_transport_expense）を呼び出して運賃を取得する（BRL-12）
+     - 経路テーブルに未登録の場合は「交通費を手動で入力してください。」とユーザーへ促し手動入力値を使用する
+   - 追加区間があれば繰り返す
 
-2. 経費情報の確認または手動入力（CF-004 Step 3-4）
-   - 自動抽出の場合：抽出結果（店舗名・金額・日付・品目）をユーザーが確認する
-   - 手動入力の場合：店舗名・金額・日付・品目をユーザーが入力する
-
-3. 経費区分の自動判断（CF-004 Step 5、BRL-17）
-   - 品目から経費区分（{categories_str}）を自動判断する
-   - 判断結果をユーザーへ提示し確認を取る
-   - 判断不能または異議あり：4択（{categories_str}）をユーザーへ提示する
-
-   【経費区分の判断基準（BRL-17）】
-   - 事務用品費：文房具、印刷用紙、コピー用品、事務用品全般
-   - 宿泊費：ホテル、旅館、宿泊施設への支払い
-   - 資格精算費：資格試験費用、受験料、資格取得に関する教材費
-   - その他経費：上記3区分に該当しない経費（会議費、交際費、研修費等）
-
-4. 業務目的を収集する（CF-004 Step 6-7、BRL-20）
+2. 業務目的を収集する（BRL-20）
    - 業務目的が入力されていない場合は入力を促す
 
-5. 収集済み申請情報をテキストとして整理・提示する（ドラフト提示ステップ）
-   - 申請者名・申請日・経費明細（購入日/店舗名/品目/経費区分/金額）・業務目的・合計金額を提示する
+3. 収集済み申請情報をテキストとして整理・提示する（ドラフト提示ステップ）
+   - 申請者名・申請日・全移動区間（移動日/出発地/目的地/交通手段/金額）・業務目的・合計金額を提示する
    - ※この時点ではTOOL-002を呼び出さない（テキスト提示のみ）
    - OK/修正/キャンセルの3択を取得する（BRL-06）
 
-6. OK承認後にTOOL-002（generate_expense_form）を呼び出す（HumanApprovalHookが承認ゲートとして機能）
-   - applicant_name, application_date, items（経費明細リスト）, business_purpose を渡す
+4. OK承認後にTOOL-002（generate_transport_expense_form）を呼び出す（HumanApprovalHookが承認ゲートとして機能）
+   - applicant_name, application_date, segments（移動区間リスト）, business_purpose を渡す
    - 成功時：生成されたファイルパスをユーザーへ提示する
    - 失敗時：エラーメッセージをユーザーへ提示する
 
-7. 申請ルールチェックを実施する（CF-006）
-   - 申請期限チェック（BRL-18）: 全経費発生日が申請期限基準日（{deadline_date}）以降であることを確認する
+5. 申請ルールチェックを実施する（CF-005）
+   - 申請期限チェック（BRL-13）: 全移動日が申請期限基準日（{deadline_date}）以降であることを確認する
      - 超過している場合はCF-008へ遷移し「申し訳ありません。経費発生日から3ヶ月を超えているため、この申請は受け付けられません。総務部門にご相談ください。」と通知する
-   - 上長承認要否判定（BRL-19）: 経費金額の合計が{manager_approval_threshold}円を超える場合はCF-009へ遷移し上長承認確認を促す
+   - 上長承認要否判定（BRL-14）: 交通費合計が{manager_approval_threshold}円を超える場合はCF-009へ遷移し上長承認確認を促す
    - 差し戻しリスク評価（BRL-08）: リスクが高い場合は警告を提示する（判定基準は要件上未定義）
 
-8. 申請書ドラフト・チェック結果・最終提示（CF-007）
+6. 申請書ドラフト・チェック結果・最終提示（CF-007）
    - 申請書ドラフトのファイルパスを提示する
    - 提出操作はユーザーが実施すること（BRL-09。申請書の自動提出禁止）
 
 【修正選択時】
-- CF-004 Step 1（領収書提出促し）へ戻り、収集情報を最初からやり直す
+- CF-003 Step 2（移動日入力）へ戻り、収集情報を最初からやり直す
 
 【キャンセル選択時】
 - 申請を中断し、セッションを終了する
 
+【駅名正規化のルール（BRL-15）】
+- TOOL-001に渡す前に、ユーザーが入力した駅名・地名を正規形（例：「渋谷」「新宿」「東京」等）に変換する
+- 略称・通称（例：「渋谷駅」→「渋谷」）も正規形に変換する
+
 【禁止事項】
 - 申請書の自動提出（BRL-09）
 - ドラフト提示ステップ（テキスト整理・提示）でのTOOL-002の呼び出し
-- AG-001・AG-002への委任（循環呼び出し禁止）
-- TOOL-001（calculate_transport_expense）の使用
+- AG-001・AG-003への委任（循環呼び出し禁止）
+- TOOL-001を使わずに運賃を推測・計算すること
 
 【エラー時の振る舞い】
 - TOOL-002のテンプレートファイルが見つからない・ファイル書き込みエラー等のシステム系エラーが発生した場合は、エラー内容を要約して呼び出し元エージェント（AG-001）に返すこと
@@ -129,8 +119,8 @@ TOOL-001（交通費計算ツール）は使用しません。
 """
 
 
-class ExpenseAgentFactory:
-    """AG-003エージェントインスタンスをsession_idキーで管理するファクトリクラス"""
+class TransportAgentFactory:
+    """AG-002エージェントインスタンスをsession_idキーで管理するファクトリクラス"""
 
     _instances: Dict[str, Agent] = {}
     _logger = logging.getLogger(__name__)
@@ -144,27 +134,27 @@ class ExpenseAgentFactory:
             )
             cls._instances[session_id] = Agent(
                 model=ModelConfig.get_model(),
-                system_prompt=_build_expense_agent_system_prompt(
+                system_prompt=_build_transport_agent_system_prompt(
                     application_date,
-                    rp.DEADLINE_MONTHS,
-                    rp.MANAGER_APPROVAL_THRESHOLD,
-                    rp.EXPENSE_CATEGORIES,
+                    tp.DEADLINE_MONTHS,
+                    tp.MANAGER_APPROVAL_THRESHOLD,
+                    tp.ALLOWED_TRANSPORT_TYPES,
                 ),
-                tools=[generate_expense_form],
+                tools=[calculate_transport_expense, generate_transport_expense_form],
                 conversation_manager=SlidingWindowConversationManager(
-                    window_size=15,
+                    window_size=20,
                     should_truncate_results=True,
                 ),
                 hooks=[
                     HumanApprovalHook(
-                        tool_names=["generate_expense_form"],
+                        tool_names=["generate_transport_expense_form"],
                     ),
-                    LoopControlHook(max_iterations=30, agent_name="expense_agent"),
+                    LoopControlHook(max_iterations=30, agent_name="transport_agent"),
                 ],
                 session_manager=session_manager,
                 callback_handler=None,
             )
-            cls._logger.info("[AG-003] エージェントインスタンス生成: session_id=%s", session_id)
+            cls._logger.info("[AG-002] エージェントインスタンス生成: session_id=%s", session_id)
         return cls._instances[session_id]
 
     @classmethod
@@ -173,10 +163,10 @@ class ExpenseAgentFactory:
 
 
 @tool(context=True)
-def expense_application_agent_tool(query: str, tool_context: ToolContext) -> str:
-    """経費精算申請フロー全体（経費情報収集・申請書生成・ルールチェック・最終提示）を実行する。
+def transport_application_agent_tool(query: str, tool_context: ToolContext) -> str:
+    """交通費精算申請フロー全体（移動情報収集・運賃計算・申請書生成・ルールチェック・最終提示）を実行する。
 
-    AG-001が経費精算申請と判定した後に呼び出す。
+    AG-001が交通費精算申請と判定した後に呼び出す。
     invocation_stateにsession_id・applicant_name・application_dateが設定されていること。
     """
     error_handler = ErrorHandler()
@@ -186,7 +176,7 @@ def expense_application_agent_tool(query: str, tool_context: ToolContext) -> str
     application_date = state.get("application_date", "")
 
     _logger.info(
-        "[AG-003] 経費精算申請エージェント呼び出し: session_id=%s, applicant_name=%s, "
+        "[AG-002] 交通費精算申請エージェント呼び出し: session_id=%s, applicant_name=%s, "
         "application_date=%s, query=%.50s",
         session_id,
         _mask_applicant_name(applicant_name),
@@ -199,7 +189,7 @@ def expense_application_agent_tool(query: str, tool_context: ToolContext) -> str
     if not _is_valid_date(application_date):
         return "エラー: 申請日の形式が不正です。"
 
-    agent = ExpenseAgentFactory.get_agent(session_id, application_date)
+    agent = TransportAgentFactory.get_agent(session_id, application_date)
     agent_state = {
         "applicant_name": applicant_name,
         "application_date": application_date,
@@ -211,29 +201,29 @@ def expense_application_agent_tool(query: str, tool_context: ToolContext) -> str
         return str(response)
     except LoopLimitError as e:
         _logger.warning(
-            "[AG-003] ループ上限到達: %s/%s, session_id=%s, query=%.50s",
+            "[AG-002] ループ上限到達: %s/%s, session_id=%s, query=%.50s",
             e.current_iteration, e.max_iterations, session_id, query,
         )
         return error_handler.handle_loop_limit_error(e)
     except ContextWindowOverflowException as e:
         _logger.warning(
-            "[AG-003] コンテキストウィンドウ超過: session_id=%s, query=%.50s", session_id, query,
+            "[AG-002] コンテキストウィンドウ超過: session_id=%s, query=%.50s", session_id, query,
         )
         return error_handler.handle_context_window_error(e)
     except MaxTokensReachedException as e:
         _logger.warning(
-            "[AG-003] 最大トークン数到達: session_id=%s, query=%.50s", session_id, query,
+            "[AG-002] 最大トークン数到達: session_id=%s, query=%.50s", session_id, query,
         )
         return error_handler.handle_max_tokens_error(e)
     except RuntimeError as e:
         _logger.error(
-            "[AG-003] RuntimeError: %s, session_id=%s, query=%.50s",
+            "[AG-002] RuntimeError: %s, session_id=%s, query=%.50s",
             str(e), session_id, query, exc_info=True,
         )
         return error_handler.handle_runtime_error(e)
     except Exception as e:
         _logger.error(
-            "[AG-003] 予期しないエラー: %s, session_id=%s, query=%.50s",
+            "[AG-002] 予期しないエラー: %s, session_id=%s, query=%.50s",
             str(e), session_id, query, exc_info=True,
         )
         return error_handler.handle_unexpected_error(e)

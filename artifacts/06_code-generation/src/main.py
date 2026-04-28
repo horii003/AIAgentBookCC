@@ -1,43 +1,64 @@
-"""社内申請システム エントリーポイント"""
+"""申請受付AIシステム - メインエントリーポイント"""
 import logging
 import os
 import sys
+import warnings
 
 from dotenv import load_dotenv
 
+load_dotenv()
 
-def _setup_logging() -> None:
-    os.makedirs("logs", exist_ok=True)
-    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        handlers=[
-            logging.FileHandler("logs/error.log", encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
+_log_level = os.getenv("LOG_LEVEL", "WARNING").upper()
+
+os.makedirs("logs", exist_ok=True)
+_file_handler = logging.FileHandler("logs/error.log", encoding="utf-8")
+_file_handler.setLevel(logging.WARNING)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+)
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(getattr(logging, _log_level, logging.WARNING))
+_console_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+)
+
+logging.basicConfig(
+    level=getattr(logging, _log_level, logging.WARNING),
+    handlers=[_file_handler, _console_handler],
+)
+
+warnings.filterwarnings("ignore")
+
+_logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    load_dotenv()
-    _setup_logging()
-    logger = logging.getLogger(__name__)
-
-    from tools.travel_tools import load_fare_data
     from handlers.error_handler import ErrorHandler
+    from tools.transport_tools import _fare_loader
 
     error_handler = ErrorHandler()
-    success, msg = load_fare_data()
-    if not success:
-        print(error_handler.handle_fare_data_error(msg))
-        logger.error("Failed to load fare data: %s", msg)
+
+    ok_train, msg_train = _fare_loader.load_train_routes()
+    if not ok_train:
+        print(msg_train)
         sys.exit(1)
 
-    logger.info("Fare data loaded successfully.")
+    ok_fixed, msg_fixed = _fare_loader.load_fixed_fares()
+    if not ok_fixed:
+        print(msg_fixed)
+        sys.exit(1)
 
-    from agents.orchestrator_agent import main as agent_main
-    agent_main()
+    _logger.info("[MAIN] 申請受付AIシステム起動")
+
+    from agents.orchestrator_agent import OrchestratorApp
+    try:
+        OrchestratorApp().run()
+    except Exception as e:
+        _logger.error("[MAIN] 予期しないエラー: %s", str(e), exc_info=True)
+        print(error_handler.handle_unexpected_error(e))
+        sys.exit(1)
+
+    _logger.info("[MAIN] 申請受付AIシステム正常終了")
 
 
 if __name__ == "__main__":

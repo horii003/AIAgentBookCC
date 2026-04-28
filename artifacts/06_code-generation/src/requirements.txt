@@ -1,0 +1,7 @@
+strands-agents
+strands-agents-tools
+boto3
+openpyxl
+pydantic>=2.0
+python-dateutil
+python-dotenv
