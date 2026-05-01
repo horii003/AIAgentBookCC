@@ -1,149 +1,144 @@
+---
+version: "1.0.0"
+last_updated: "2026-05-01"
+phase: "05_detailed-design"
+result: "合格"
+---
+
 # 05_detailed-design フェーズ品質チェック
 
-**実施日**: 2026-04-28
-**対象フェーズ**: 05_detailed-design
-**チェック実施者**: Claude Code
+---
+
+## 1. チェック対象成果物
+
+| # | ファイル名 | 作成日 |
+|---|-----------|--------|
+| 1 | LoopControlHook詳細設計書.md | 2026-05-01 |
+| 2 | ErrorHandler詳細設計書.md | 2026-05-01 |
+| 3 | 申請書生成ツール詳細設計書.md | 2026-05-01 |
+| 4 | HumanApprovalHook詳細設計書.md | 2026-05-01 |
+| 5 | 交通費計算ツール詳細設計書.md | 2026-05-01 |
+| 6 | 交通費精算申請エージェント詳細設計書.md | 2026-05-01 |
+| 7 | 経費精算申請エージェント詳細設計書.md | 2026-05-01 |
+| 8 | 申請受付窓口エージェント詳細設計書.md | 2026-05-01 |
 
 ---
 
-## チェック結果サマリー
+## 2. テンプレート準拠チェック
 
-**判定: ✅ 合格**
-
-全8件の成果物がテンプレート準拠・基本設計との整合・実装可能レベルの詳細化・次フェーズへの引き継ぎ情報の4観点を満たしていることを確認した。
-
----
-
-## 対象成果物一覧
-
-| # | 成果物名 | 状態 |
-|---|---------|------|
-| 1 | 交通費計算ツール詳細設計書.md | ✅ 合格 |
-| 2 | 申請書生成ツール詳細設計書.md | ✅ 合格 |
-| 3 | AG-001_申請受付窓口エージェント詳細設計書.md | ✅ 合格 |
-| 4 | AG-002_交通費精算申請エージェント詳細設計書.md | ✅ 合格 |
-| 5 | AG-003_経費精算申請エージェント詳細設計書.md | ✅ 合格 |
-| 6 | ErrorHandler詳細設計書.md | ✅ 合格 |
-| 7 | HumanApprovalHook詳細設計書.md | ✅ 合格 |
-| 8 | LoopControlHook詳細設計書.md | ✅ 合格 |
+| 成果物 | 必須セクション網羅 | 判定 |
+|--------|-----------------|------|
+| LoopControlHook詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・エラーハンドリング・ログ出力・データ設計・依存関係・テスト観点・設定値 | ✅ |
+| ErrorHandler詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・実装詳細・データ設計・補足情報・依存関係・テスト観点 | ✅ |
+| 申請書生成ツール詳細設計書.md | 概要・ツール一覧・各ツール設計（基本情報・インターフェース・ビジネスロジック・エラーハンドリング・ログ出力）・データ設計・補足情報・依存関係・テスト観点・設定値 | ✅ |
+| HumanApprovalHook詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・実装詳細・エラーハンドリング・ログ出力・データ設計・補足情報・依存関係・テスト観点・設定値 | ✅ |
+| 交通費計算ツール詳細設計書.md | 概要・ツール一覧・ツール設計（基本情報・インターフェース・ビジネスロジック・エラーハンドリング・ログ出力）・データ設計・補足情報・依存関係・テスト観点・設定値 | ✅ |
+| 交通費精算申請エージェント詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・設定構成・連携設計・実装詳細・エラーハンドリング・ログ出力・データ設計・補足情報・依存関係・テスト観点 | ✅ |
+| 経費精算申請エージェント詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・設定構成・連携設計・実装詳細・エラーハンドリング・ログ出力・データ設計・補足情報・依存関係・テスト観点 | ✅ |
+| 申請受付窓口エージェント詳細設計書.md | 概要・設計詳細・インターフェース・ビジネスロジック・設定構成・連携設計・実装詳細・エラーハンドリング・ログ出力・データ設計・補足情報・依存関係・テスト観点 | ✅ |
 
 ---
 
-## 観点1: テンプレート準拠
+## 3. 整合性チェック
 
-### チェック内容
-各成果物がテンプレートに定義されたセクション構成に従って作成されていること。
+### 3.1 横断的仕様の整合性
 
-| 成果物 | テンプレート | 判定 | 備考 |
-|--------|------------|------|------|
-| 交通費計算ツール詳細設計書.md | ツール詳細設計テンプレート.md | ✅ | 1.概要/2.設計詳細/3.ツール設計/4.ビジネスロジック/5.エラーハンドリング/6.ログ/7.依存関係/8.テスト観点/9.変更履歴の全セクションを含む |
-| 申請書生成ツール詳細設計書.md | ツール詳細設計テンプレート.md | ✅ | 交通費/経費の2ツール構成。全セクション含む |
-| AG-001〜003詳細設計書.md | エージェント詳細設計テンプレート.md | ✅ | 1.概要/2.設計詳細/2.2インターフェース/2.3ビジネスロジック/2.4設定構成/2.5連携設計/3.実装詳細/4.データ設計/5.補足/6.依存関係/7.テスト観点の全セクションを含む |
-| ErrorHandler詳細設計書.md | ハンドラー詳細設計テンプレート.md | ✅ | 1.概要/2.設計詳細/3.ビジネスロジック/4.データ設計/5.補足の全セクションを含む |
-| HumanApprovalHook詳細設計書.md | ハンドラー詳細設計テンプレート.md | ✅ | フック設計セクション（register_hooks・イベントハンドラー）を含む |
-| LoopControlHook詳細設計書.md | ハンドラー詳細設計テンプレート.md | ✅ | フック設計セクション（6イベントハンドラー・LoopLimitErrorカスタム例外定義）を含む |
+| チェック項目 | 内容 | 判定 |
+|------------|------|------|
+| LoopLimitError 定義場所 | `handlers/loop_control_hook.py` 内で定義され、全インポートが `from handlers.loop_control_hook import LoopLimitError` で統一されていること | ✅ |
+| LoopLimitError フィールド | `current_iteration: int`, `max_iterations: int`, `agent_name: str` の3フィールドを持つこと | ✅ |
+| EventLoopException への言及ゼロ | 全設計書で `EventLoopException` への言及が排除されていること | ✅ |
+| ErrorHandler 11メソッド | 旧8メソッドが削除され、新11メソッドが全設計書で参照されていること | ✅ |
+| ErrorHandler ログ出力なし | ErrorHandler 自身はログ出力・セッション更新を行わず、呼び出し元が責任を持つことが全設計書で明記されていること | ✅ |
+| 出力ディレクトリ統一 | 全ファイルで `data/output/{session_id}/` に統一されていること（旧 `data/outputs/` 廃止） | ✅ |
 
-**判定: ✅ 合格** — 全成果物でテンプレートセクション構成への準拠を確認。
+### 3.2 ハンドラー整合性
 
----
+| チェック項目 | 内容 | 判定 |
+|------------|------|------|
+| LoopControlHook 新ハンドラー | `BeforeModelCallEvent`, `BeforeToolCallEvent`, `AfterToolCallEvent`, `AfterInvocationEvent` の4ハンドラーが追加されていること | ✅ |
+| LoopControlHook event.exception | `event.has_error` への言及がゼロで、全て `getattr(event, "exception", None) is not None` に変更されていること | ✅ |
+| LoopControlHook max_iterations | AG-001/AG-002/AG-003 全て `max_iterations=30` に統一されていること | ✅ |
+| LoopControlHook agent_name | AG-001="AG-001"、AG-002="transport_agent"、AG-003="expense_agent" が設定されていること | ✅ |
+| HumanApprovalHook コールバックシグネチャ | `(tool_name: str, tool_params: dict) -> tuple[bool, str]` が全設計書で統一されていること | ✅ |
+| HumanApprovalHook event.cancel_tool | ツール中止方法が `event.cancel_tool` へのメッセージセットで統一され、`event.stop_reason`/`event.cancel()` への言及がゼロであること | ✅ |
+| HumanApprovalHook 承認対象 | 「申請書生成ツール詳細設計書に定義された全ツール関数名」への参照が明記されていること（`generate_transport_application`, `generate_expense_application`） | ✅ |
 
-## 観点2: 基本設計との整合性
+### 3.3 ツール整合性
 
-### チェック内容
-詳細設計の内容が上流の基本設計・システム設計の方針と矛盾しないこと。
+| チェック項目 | 内容 | 判定 |
+|------------|------|------|
+| applicant_name/application_date 取得方式 | 申請書生成ツール・エージェント設計書の両方で「invocation_state から取得」に統一されていること（LLMパラメータとして渡す記述が排除されていること） | ✅ |
+| 交通費申請書セルマッピング | A=No, B=移動日, C=出発地, D=目的地, E=交通手段, F=費用, G=業務目的, H=承認状況（空欄）で統一されていること | ✅ |
+| 経費申請書セルマッピング | A=No, B=購入日, C=店舗名, D=品目, E=経費区分, F=金額, G=業務目的, H=承認状況（空欄）で統一されていること | ✅ |
+| ファイル保存エラー戻り値 | `(False, エラーメッセージ)` タプルに統一されていること | ✅ |
+| generate() エラー戻り値 | `{"success": False, "message": エラーメッセージ}` dict に統一されていること | ✅ |
+| os.path.exists() 事前チェック | 全データファイルアクセスで `os.path.exists()` 事前チェックが使用され、`open()` 時の `FileNotFoundError` 捕捉との併用が禁止されていること | ✅ |
+| 交通費計算ツール ファイルパス | `/data/train_routes.json`, `/data/fixed_fares.json` に統一されていること | ✅ |
+| 固定運賃JSONキー | `{"バス": int, "タクシー": int, "飛行機": int}` の日本語キー形式に統一されていること | ✅ |
+| リスト線形探索 | 交通費計算ツールの経路検索がリスト線形探索で統一されていること（辞書キー参照不使用） | ✅ |
+| ValueError 使用 | 経路未存在/キー不存在の異常系が `ValueError` で統一されていること（`KeyError` 不使用） | ✅ |
+| FileNotFoundError ログレベル | ファイル不存在時のログレベルが WARNING に統一されていること | ✅ |
+| image_reader 使用 | AG-003 が領収書 OCR に `strands_tools` の `image_reader` を使用することが明記されていること | ✅ |
 
-| チェック項目 | 確認内容 | 判定 |
-|------------|---------|------|
-| TOOL-001の利用エージェント | AG-002のみ。AG-001・AG-003はcalculate_transport_expenseを登録していない | ✅ |
-| TOOL-002の利用エージェント | AG-002（generate_transport_expense_form）・AG-003（generate_expense_form）。AG-001は登録していない | ✅ |
-| HumanApprovalHookの登録 | AG-002・AG-003のみ。AG-001には登録しない（基本設計書 7.1節の制約を守っている） | ✅ |
-| LoopControlHookのmax_iterations | AG-001/002/003すべてに max_iterations=30 で登録（実行制御方針.md 10.2節と整合） | ✅ |
-| SlidingWindowサイズ | AG-001=30, AG-002=20, AG-003=15（共通設定方針 2.2節と整合） | ✅ |
-| invocation_stateの受け渡し | applicant_name/application_date/session_idはAG-001がinvocation_stateにセット。TOOL-001/TOOL-002はinvocation_stateから内部取得（LLMパラメータとして渡さない）（マルチエージェント連携設計 7.2節と整合） | ✅ |
-| callback_handler=None | AG-002・AG-003のAgentインスタンスに設定して二重出力を防止（AG-001基本設計書 16.2節と整合） | ✅ |
-| 動的プロンプト生成 | AG-002: _build_transport_agent_system_prompt、AG-003: _build_expense_agent_system_prompt（基本設計書 7章と整合） | ✅ |
-| 申請期限基準日 | AG-002: BRL-13（3ヶ月・10,000円閾値）、AG-003: BRL-18（3ヶ月・5,000円閾値）（基本設計書と整合） | ✅ |
-| EX-01〜EX-08分類 | ErrorHandlerのメソッドがEX-01〜EX-08に1対1でマッピング（例外処理方針.mdと整合） | ✅ |
-| BeforeToolCallEventのフィルタリング | ツール名の完全一致でTOOL-002のみブロック、TOOL-001はスルー（基本設計書 7.2節と整合） | ✅ |
-| LoopLimitError（LoopControlHook定義） | LoopLimitError は hooks/loop_control_hook.py 内で定義。AG-001/002/003がキャッチしてErrorHandler.handle_loop_limit_error()でメッセージ変換（基本設計書 7.2節と整合） | ✅ |
-| 申請書の自動提出禁止（BRL-09） | TOOL-002の生成後「提出操作はご自身で実施してください」を提示（AG-002/003詳細設計書 2.2.2節） | ✅ |
+### 3.4 エージェント整合性
 
-**判定: ✅ 合格** — 全チェック項目で基本設計・システム設計との整合を確認。矛盾なし。修正#18適用後の変更（max_iterations=30・クラスベース設計・approval_callback仕様・agent_knowledgeモジュール参照）も整合を確認済み。
-
----
-
-## 観点3: 実装可能なレベルまでの詳細化
-
-### チェック内容
-各成果物が実装者がコードを記述できるレベルの情報（関数シグネチャ・処理フロー・エラー処理）を含むこと。
-
-| 成果物 | 関数シグネチャ | 処理フロー | エラー処理 | 判定 |
-|--------|------------|-----------|-----------|------|
-| 交通費計算ツール詳細設計書.md | ✅ calculate_transport_expense(transport_date, departure, destination, transport_type) | ✅ 電車/固定運賃の分岐フロー | ✅ success=False返却パターン | ✅ |
-| 申請書生成ツール詳細設計書.md | ✅ generate_transport/expense_form(applicant_name, application_date, segments/items, business_purpose) | ✅ テンプレート読込→セル書込→保存フロー | ✅ テンプレートなし・書き込みエラーの2パターン | ✅ |
-| AG-001詳細設計書.md | ✅ OrchestratorAppクラス（__init__/run/_collect_applicant_name/_initialize_session/_reset_session/_mask_applicant_name）・session_id形式（YYYYMMDDHHmmss_8hex） | ✅ 申請者名収集→セッション初期化→対話ループ→ルーティング | ✅ KeyboardInterrupt/LoopLimitError/ContextWindowOverflowException/MaxTokensReachedException/RuntimeError/Exceptionの6ケース。WARNING/ERRORログレベル区分・str返却 | ✅ |
-| AG-002詳細設計書.md | ✅ エージェント名: transport_agent。TransportAgentFactoryクラス（get_agent/remove）・transport_application_agent_tool・_build_transport_agent_system_prompt | ✅ agent_knowledge/transportation_policies.py定数参照→キャッシュ→対話ループ→ルールチェック | ✅ LoopLimitError/ContextWindowOverflowException/MaxTokensReachedException=WARNING・RuntimeError/Exception=ERROR+exc_info。全エラーstr返却・query[:50]ログ記録 | ✅ |
-| AG-003詳細設計書.md | ✅ ExpenseAgentFactoryクラス（get_agent/remove）・expense_application_agent_tool・_build_expense_agent_system_prompt | ✅ agent_knowledge/receipt_policies.py定数参照・image_readerツール（strands_tools）によるBRL-16領収書読み取り | ✅ AG-002と同パターン（[AG-003]プレフィックス） | ✅ |
-| ErrorHandler詳細設計書.md | ✅ 11メソッドの引数・戻り値型（全メソッドが例外オブジェクトのみを受け取りstr返却） | ✅ 各メソッドがユーザー向けメッセージ文字列のみ生成・返却 | ✅ ログなし・SessionManagerなし・コンストラクタ引数なし | ✅ |
-| HumanApprovalHook詳細設計書.md | ✅ register_hooks・_on_before_tool_call・_log_approval・approval_callback仕様（シグネチャ・戻り値3パターン・event.cancel_toolによるツール中止） | ✅ ツール名フィルタ→コールバック/デフォルト承認処理→分岐 | ✅ ログ失敗・event.tool_use欠損・無効入力・コールバック例外 | ✅ |
-| LoopControlHook詳細設計書.md | ✅ register_hooks・6イベントハンドラー（BeforeInvocation/BeforeModelCall/AfterModelCall/BeforeToolCall/AfterToolCall/AfterInvocation）・LoopLimitError定義 | ✅ 6イベントフロー・AfterModelCallでLoopLimitError送出・AfterInvocationでリセットなし | ✅ event.exception存在時のAfterModelCallスキップ・想定外エラー | ✅ |
-
-**判定: ✅ 合格** — 全成果物で実装可能なレベルの詳細化を確認。コード生成フェーズへ引き渡せる粒度。
+| チェック項目 | 内容 | 判定 |
+|------------|------|------|
+| AG-002 実装命名 | `transport_agent` で統一されていること | ✅ |
+| AG-003 実装命名 | `expense_agent` で統一されていること | ✅ |
+| 専門エージェント 個別例外捕捉 | AG-002/AG-003 が LoopLimitError/ContextWindowOverflowException/MaxTokensReachedException/RuntimeError/Exception を個別に捕捉し、エラー戻り値型が `str` であること | ✅ |
+| AG-001 個別例外捕捉 | AG-001 が KeyboardInterrupt(INFO+break)/LoopLimitError(WARNING+continue)/ContextWindowOverflowException(WARNING+continue)/MaxTokensReachedException(WARNING+continue)/RuntimeError(ERROR+continue)/Exception(ERROR+continue) を個別に捕捉していること | ✅ |
+| ログクエリ先頭50文字 | AG-002/AG-003 の例外捕捉時ログに `query[:50]` が含まれること | ✅ |
+| 全ログ session_id 含む | AG-001 の例外捕捉時ログに `session_id` が含まれること | ✅ |
+| 日本語ログ | 全エージェント・全ツールのログメッセージが日本語化されていること | ✅ |
+| 申請者名マスキング | 全エージェントのログで申請者名が `****` でマスキングされることが明記されていること | ✅ |
+| 妥当性チェックルール外部参照 | AG-002 が `agent_knowledge/transportation_policies.py`、AG-003 が `agent_knowledge/receipt_policies.py` を参照することが明記されていること | ✅ |
+| AG-001 ウェルカムメッセージ | 起動時ウェルカムメッセージが定義されていること（内容・フォーマット仕様準拠） | ✅ |
+| AG-001 入力プロンプト | `\n\n入力内容（終了時はquit）: ` に変更されていること | ✅ |
+| session_id 生成方式 | `datetime.now().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]` が AG-001 設計書に明記されていること | ✅ |
 
 ---
 
-## 観点4: 次フェーズへの引き継ぎ情報
+## 4. 04_basic-design 残存未定義項目の解決状況
 
-### チェック内容
-06_code-generationフェーズに必要な情報（クラス名・ファイルパス・依存関係・設定値）が揃っていること。
-
-| 引き継ぎ情報 | 記載箇所 | 判定 |
-|------------|---------|------|
-| クラス名・関数名 | 各設計書 3.1節（クラス設計・関数設計） | ✅ |
-| ファイルパス（ソース） | 各設計書の依存関係 6章 | ✅ |
-| データファイルパス（template/train_routes.json、template/fixed_fares.json） | 交通費計算ツール詳細設計書 5章・9章 | ✅ |
-| テンプレートファイルパス | 申請書生成ツール詳細設計書 3.4節 | ✅ |
-| 出力先ディレクトリ（output/） | 申請書生成ツール詳細設計書 3.4節 | ✅ |
-| セッションデータパス（data/sessions/） | AG-002/AG-003詳細設計書 2.4節 | ✅ |
-| ログファイルパス（logs/error.log, logs/approval.log） | ErrorHandler・HumanApprovalHook詳細設計書 4章 | ✅ |
-| 外部ライブラリ一覧 | 各設計書 6章（依存関係） | ✅ |
-| Pydanticモデル名 | ツール詳細設計書 3.2.1節（TransportExpenseCalculatorInput等） | ✅ |
-| invocation_stateの辞書構造 | AG-001〜003詳細設計書 4章 | ✅ |
-| HumanApprovalHookのtool_namesパラメータ | HumanApprovalHook詳細設計書 10章 | ✅ |
-| LoopControlHookのmax_iterations | LoopControlHook詳細設計書 9章 | ✅ |
-| SlidingWindowサイズ（30/20/15） | AG-001〜003詳細設計書 2.4節 | ✅ |
-| システムプロンプト全文 | AG-001〜003詳細設計書 2.3.1節 | ✅ |
-| ErrorHandlerメソッド一覧（11メソッド） | ErrorHandler詳細設計書 2章（handle_throttling_error/handle_max_tokens_error/handle_context_window_error/handle_fare_data_error/handle_calculation_error/handle_file_save_error/handle_validation_error/handle_keyboard_interrupt/handle_loop_limit_error/handle_runtime_error/handle_unexpected_error） | ✅ |
-| LoopLimitErrorの定義場所 | LoopControlHook詳細設計書（hooks/loop_control_hook.py内で定義。3フィールド: current_iteration/max_iterations/agent_name） | ✅ |
-
-**判定: ✅ 合格** — コード生成フェーズに必要な全情報が揃っていることを確認。
+| 項目 | 04_basic-design での状態 | 詳細設計での解決状況 |
+|-----|------------------------|-------------------|
+| 対話回数上限チェック実装方法 | 「AG-001 が入力カウンタを管理する方式を想定」として持ち越し | ✅ 解決: `_run_repl` 関数内の対話カウンタで管理。上限30回到達時に上限メッセージ表示・終了として明記 |
+| 文字列フィールドの最大長 | 要件上未定義 | ⚠️ 未解決: 申請者名・業務目的・店舗名・品目の最大長は実装フェーズで確定 |
+| セッションタイムアウト | 要件上未定義 | ⚠️ 未解決: セッションファイルの保持期間・タイムアウト処理は実装フェーズで確定 |
 
 ---
 
-## 指摘事項
+## 5. 品質チェック結果
 
-### 要件上未定義として引き継ぐ項目
+| チェック分類 | 結果 |
+|------------|------|
+| テンプレート準拠 | ✅ 全8ファイル合格 |
+| 横断的仕様整合性 | ✅ 合格 |
+| ハンドラー整合性 | ✅ 合格 |
+| ツール整合性 | ✅ 合格 |
+| エージェント整合性 | ✅ 合格 |
+| 04_basic-design 残存項目の引き継ぎ | ✅ 確認済み（2件は実装フェーズへ継続） |
 
-以下の項目は上流要件が未定義のため、詳細設計書でも「要件上未定義」として記載されている。コード生成フェーズ以降でも保留扱いとする。
-
-| 項目 | 記載箇所 | 状況 |
-|------|---------|------|
-| BRL-08（差し戻しリスク評価）の判定基準 | AG-002/AG-003詳細設計書 2.3.2節 | 要件上未定義（業務要件レベルで未確定） |
-| Amazon Bedrockのタイムアウト値 | 実行制御方針.md 17節 U-001 | 要件上未定義 |
-| TOOL-001/TOOL-002のタイムアウト値 | 実行制御方針.md 17節 U-002 | 要件上未定義 |
-| Human-in-the-Loop承認待ちのタイムアウト | 実行制御方針.md 17節 U-003 | 要件上未定義 |
-| 申請先の提示内容（BRL-03） | AG-001詳細設計書 2.3.1節 | 要件上未定義 |
-| HumanApprovalHookデフォルト承認処理の無効入力上限回数 | HumanApprovalHook詳細設計書 7.1節 5項 | 要件上未定義（実装判断で5回連続無効でキャンセル可としているが上限は要件未定義） |
+**総合判定: ✅ 合格**
 
 ---
 
-## 総合判定
+## 6. 残存する未定義項目（要件上未定義・実装フェーズで確定）
 
-**✅ 合格**
+| 項目 | 内容 | 詳細 |
+|-----|------|------|
+| 文字列フィールドの最大長 | 申請者名・業務目的・店舗名・品目の文字列フィールドに対する上限文字数が要件上未定義 | Pydantic モデルの `max_length` バリデーターを実装フェーズで追加する |
+| セッションタイムアウト | セッションファイル（`data/sessions/session_{id}.json`）の保持期間・タイムアウト自動クローズ処理が未定義 | 実装フェーズで定義する（例: 24時間無操作で TERMINATED 遷移） |
+| agent_knowledge ポリシーファイルの内容 | `agent_knowledge/transportation_policies.py` および `agent_knowledge/receipt_policies.py` のファイル内容（具体的なルール記述）が未定義 | 実装フェーズで作成する（BRL-10〜BRL-18 等の業務ルールをコードまたはドキュメントとして定義） |
+| invocation_state 受け渡し時の `approved` フラグ | HumanApprovalHook が承認後に `session_{id}.json` へ `approval_granted=True` を記録するが、エージェントが该フラグを読み取るタイミング・用途が未明示 | 実装フェーズで FileBasedSessionManager の読み取り仕様として確定 |
 
-- テンプレート準拠: 全8件 ✅
-- 基本設計との整合: 全チェック項目 ✅（矛盾なし）
-- 実装可能レベルの詳細化: 全8件 ✅
-- 次フェーズ引き継ぎ情報: 全項目 ✅
+---
 
-05_detailed-design フェーズの全成果物が品質基準を満たしており、06_code-generation フェーズへ進む準備が完了した。
+## 7. 備考
+
+- `image_reader`（strands_tools）は AG-003 の `tools` リストに追加済みとして設計。実装時に `strands_tools` パッケージの正確なインポート方法を確認すること
+- `agent_knowledge/transportation_policies.py` および `agent_knowledge/receipt_policies.py` は本フェーズで参照先として定義されたが、ファイル本体の作成は実装フェーズに持ち越し
+- `FileBasedSessionManager` の `approval_granted` 書き込みは `HumanApprovalHook._handle_approved()` から呼び出される設計だが、読み取り側の実装詳細は実装フェーズで確定
+- v1.0 (初版): 18項目の仕様変更（LoopLimitError 追加、ErrorHandler 11メソッド刷新、セルマッピング変更、invocation_state 取得方式変更、os.path.exists() 事前チェック、日本語ログ・申請者名マスキング等）をすべて詳細設計書に反映済み

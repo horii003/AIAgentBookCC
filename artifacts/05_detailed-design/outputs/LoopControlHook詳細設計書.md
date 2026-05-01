@@ -1,33 +1,33 @@
+---
+version: "1.1.0"
+last_updated: "2026-05-01"
+updated_by: ""
+---
+
 # LoopControlHook 詳細設計書
 
 > **参照元（基本設計資料）:**
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 4章（LoopControlHookの位置づけ・処理概要）
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 5章（マルチエージェント連携時の扱い）
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 7章（詳細設計への引き渡し事項）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 4章（LoopControlHook 基本設計）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 7章（詳細設計への引き渡し事項）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 9章（制約事項・前提条件）
 
 > **参照元（システム設計資料）:**
-> - artifacts/03_system-design/outputs/実行制御方針.md（ループ制御の方針・ループ制限到達時の処理）
-> - artifacts/03_system-design/outputs/共通設定方針.md（フック登録設定値）
+> - artifacts/03_system-design/outputs/実行制御方針.md（ループ制御方針・上限値の根拠）
+> - artifacts/03_system-design/outputs/共通設定方針.md（LoopControlHook 最大回数の共通設定）
 
 ## 1. 概要
 
 ### 1.1 コンポーネントの目的
-
-全エージェント（AG-001/AG-002/AG-003）のReActループのイテレーション回数を監視し、最大30回で強制停止する。LLMの暴走・同一アクション繰り返し・想定外の無限ループを防止する（実行制御方針.md 10.1節）。ループ上限到達時は `raise LoopLimitError` でエラーを発生させ、呼び出し元エージェントがエラーをキャッチしてユーザーへメッセージを提示する。
+全エージェント（AG-001/AG-002/AG-003）の ReActループ回数を監視し、上限（30回）到達時にループを強制停止する。ループ暴走によるシステムコスト（API コール数）の増加とユーザーへの無応答状態を防止する。上限到達時は `LoopLimitError` を発生させ、呼び出し元がエラーとして処理する。
 
 ### 1.2 主要な責務
-
-- **ループカウンタ管理**: BeforeInvocationEventでカウンタを0にリセットし、AfterModelCallEventでインクリメントする（`event.exception` が存在する場合はスキップ）
-- **ループ回数ログ出力**: BeforeModelCallEventでループ回数をINFOレベルでログ出力する
-- **ツール呼び出しログ出力**: BeforeToolCallEvent・AfterToolCallEventでツール名をINFOレベルでログ出力する
-- **上限監視・強制停止**: カウンタが上限に到達した時点で `LoopLimitError` を raise する
-- **合計ループ回数ログ出力**: AfterInvocationEventで合計ループ回数をINFOレベルでログ出力する
-
-### 1.3 非責務
-
-- **Amazon Bedrockのリトライ制御**: Strands Agents SDKの組み込みリトライ機構が担当する
-- **ユーザー向けエラーメッセージ生成**: 呼び出し元エージェントが ErrorHandler に委譲する
-- **セッション状態の直接変更**: Strands Agents SDKが担当する
+- エージェント呼び出し開始時（`BeforeInvocationEvent`）にループカウンタを 0 にリセットする
+- LLM 呼び出し完了後（`AfterModelCallEvent`）にループカウンタをインクリメントし上限到達時に `LoopLimitError` を発生させる
+- エラーが発生した LLM 呼び出しはカウントしない（`event.exception` が存在する場合スキップ）
+- LLM 呼び出し開始前（`BeforeModelCallEvent`）にループ回数を INFO ログ出力する
+- ツール呼び出し開始前（`BeforeToolCallEvent`）にツール名を INFO ログ出力する
+- ツール呼び出し完了後（`AfterToolCallEvent`）にツール名を INFO ログ出力する
+- エージェント呼び出し完了後（`AfterInvocationEvent`）に合計ループ回数を INFO ログ出力する（リセットは行わない）
 
 ---
 
@@ -37,416 +37,361 @@
 
 | 項目 | 内容 |
 |------|------|
-| コンポーネントID | `HD-003` |
+| コンポーネントID | HD-003 |
 | コンポーネント名 | LoopControlHook |
-| コンポーネント種別 | ハンドラー（フッククラス） |
-| 説明 | ReActループのイテレーション回数を監視・制限する暴走防止フック。全エージェントに登録する |
+| コンポーネント種別 | ハンドラー（ループ制御フック） |
+| 説明 | ReActループ回数を監視し上限到達時にループを強制停止するフック |
+| 実装ファイル | `handlers/loop_control_hook.py` |
 
 ---
 
-### 2.2 初期化
+### 2.2 インターフェース設計
 
-#### `__init__(self, max_iterations: int = 30, agent_name: str = "")`
+#### 2.2.1 コンストラクタ
 
-ループ上限値とエージェント名を受け取り、インスタンスを初期化する。
+| 引数名 | 型 | 説明 | デフォルト値 |
+|--------|-----|------|--------------|
+| max_iterations | int | ループ上限回数 | なし（必須） |
+| agent_name | str | エージェント名（LoopLimitError に付与） | なし（必須） |
 
-**引数**:
-- `max_iterations` (int): ループの最大イテレーション回数（デフォルト: `30`）
-- `agent_name` (str): エージェント名（ログ出力・LoopLimitErrorのフィールドに使用）
+#### 2.2.2 登録イベントとハンドラー
 
-**インスタンス変数**:
+| イベント名 | ハンドラーメソッド名 | 発火タイミング | 処理概要 |
+|-----------|-------------------|--------------|---------|
+| BeforeInvocationEvent | `before_invocation` | エージェント呼び出し開始時 | ループカウンタを 0 にリセットし INFO ログ出力する |
+| AfterModelCallEvent | `after_model_call` | LLM 呼び出し（1 ReActステップ）完了後 | ループカウンタをインクリメントし上限監視する |
+| BeforeModelCallEvent | `before_model_call` | LLM 呼び出し開始前 | ループ回数を INFO ログ出力する |
+| BeforeToolCallEvent | `before_tool_call` | ツール呼び出し開始前 | ツール名を INFO ログ出力する |
+| AfterToolCallEvent | `after_tool_call` | ツール呼び出し完了後 | ツール名を INFO ログ出力する |
+| AfterInvocationEvent | `after_invocation` | エージェント呼び出し完了後 | 合計ループ回数を INFO ログ出力する（リセットは行わない） |
 
-| 変数名 | 型 | 説明 |
-|--------|-----|------|
-| `_max_iterations` | `int` | ループの最大イテレーション回数 |
-| `_iteration_count` | `int` | 現在のループカウンタ（初期値: `0`） |
-| `_agent_name` | `str` | エージェント名（LoopLimitError・ログ出力に使用） |
-| `_logger` | `logging.Logger` | Pythonロガーインスタンス |
-
----
-
-### 2.3 主要メソッド
-
-#### 2.3.1 register_hooks(self, registry, \*\*kwargs) → None
-
-##### 説明
-HookRegistryに5つのイベントハンドラーを登録する。Strands Agents SDKがエージェント初期化時に自動呼び出す。
-
-##### 引数
-- `registry` (HookRegistry): Strands Agents SDKが提供するフックレジストリ
-- `**kwargs` (Any): SDK提供の追加引数（使用しない）
-
-##### 処理内容
-1. `registry.add_callback(BeforeInvocationEvent, self._on_before_invocation)` を登録する
-2. `registry.add_callback(BeforeModelCallEvent, self._on_before_model_call)` を登録する
-3. `registry.add_callback(AfterModelCallEvent, self._on_after_model_call)` を登録する
-4. `registry.add_callback(BeforeToolCallEvent, self._on_before_tool_call)` を登録する
-5. `registry.add_callback(AfterToolCallEvent, self._on_after_tool_call)` を登録する
-6. `registry.add_callback(AfterInvocationEvent, self._on_after_invocation)` を登録する
-
----
-
-#### 2.3.2 _on_before_invocation(self, event) → None
-
-##### 説明
-エージェント呼び出し開始時に発火するハンドラー。ループカウンタを0にリセットする。
-
-##### 引数
-- `event` (BeforeInvocationEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. `self._iteration_count = 0` にリセットする
-2. ログを記録する: `INFO "[LoopControlHook] ループカウンタリセット: agent_name={agent_name}"`
-
----
-
-#### 2.3.3 _on_before_model_call(self, event) → None
-
-##### 説明
-LLM呼び出し前に発火するハンドラー。現在のループ回数をINFOレベルでログ出力する。
-
-##### 引数
-- `event` (BeforeModelCallEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. ログを記録する: `INFO "[LoopControlHook] ループ回数: count={count}/{max}, agent_name={agent_name}"`
-
----
-
-#### 2.3.4 _on_after_model_call(self, event) → None
-
-##### 説明
-LLM呼び出し完了後に発火するハンドラー。`event.exception` が存在する場合はカウントをスキップする。上限到達時は `LoopLimitError` を raise してループを強制停止する。
-
-##### 引数
-- `event` (AfterModelCallEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. `event.exception` が存在する場合はカウント処理をスキップしてreturnする
-2. `self._iteration_count += 1` でカウンタをインクリメントする
-3. カウンタが `_max_iterations` 未満の場合: returnする
-4. カウンタが `_max_iterations` 以上の場合:
-   - `WARNING "[LoopControlHook] ループ上限到達: count={count}/{max}, agent_name={agent_name}"`
-   - `raise LoopLimitError(current_iteration=self._iteration_count, max_iterations=self._max_iterations, agent_name=self._agent_name)`
-
----
-
-#### 2.3.5 _on_before_tool_call(self, event) → None
-
-##### 説明
-ツール呼び出し前に発火するハンドラー。ツール名をINFOレベルでログ出力する。
-
-##### 引数
-- `event` (BeforeToolCallEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. `tool_name = event.tool_use.get("name", "")` でツール名を取得する
-2. ログを記録する: `INFO "[LoopControlHook] ツール呼び出し開始: tool_name={tool_name}, agent_name={agent_name}"`
-
----
-
-#### 2.3.6 _on_after_tool_call(self, event) → None
-
-##### 説明
-ツール呼び出し完了後に発火するハンドラー。ツール名をINFOレベルでログ出力する。
-
-##### 引数
-- `event` (AfterToolCallEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. `tool_name = event.tool_use.get("name", "")` でツール名を取得する
-2. ログを記録する: `INFO "[LoopControlHook] ツール呼び出し完了: tool_name={tool_name}, agent_name={agent_name}"`
-
----
-
-#### 2.3.7 _on_after_invocation(self, event) → None
-
-##### 説明
-エージェント呼び出し完了後に発火するハンドラー。合計ループ回数をINFOレベルでログ出力する。ループカウンタのリセットは行わない。
-
-##### 引数
-- `event` (AfterInvocationEvent): Strands Agents SDKが提供するイベントオブジェクト
-
-##### 処理内容
-1. ログを記録する: `INFO "[LoopControlHook] 呼び出し完了: total_iterations={count}, agent_name={agent_name}"`
-
----
-
-## 3. LoopLimitError カスタム例外クラス
-
-### 3.1 定義モジュール
-
-`hooks/loop_control_hook.py` 内で定義する。
+#### 2.2.3 エージェントへの登録
 
 ```python
-class LoopLimitError(Exception):
-    """ループ上限到達を表すカスタム例外クラス。"""
+# AG-001 / AG-002 / AG-003 すべてに登録する
+Agent(
+    ...,
+    hooks=[
+        LoopControlHook(max_iterations=MAX_LOOP_ITERATIONS, agent_name="AG-001"),
+        # AG-002/AG-003 はさらに HumanApprovalHook() を追加
+    ],
+    ...
+)
+```
 
-    def __init__(self, current_iteration: int, max_iterations: int, agent_name: str):
+> `MAX_LOOP_ITERATIONS = 30` は `config/model_config.py` で定義し、全エージェントで共通の値を使用する
+
+---
+
+### 2.3 ビジネスロジック
+
+#### 2.3.1 処理フロー
+
+```
+BeforeInvocationEvent 発火（エージェント呼び出し開始時）
+  ↓
+_loop_count を 0 にリセットする
+INFO ログ: "エージェント呼び出し開始: ループカウンタをリセット (エージェント={agent_name})"
+  ↓
+（エージェントの ReAct ループ開始）
+
+  ↓ ← ここから ReAct ループ
+
+BeforeModelCallEvent 発火
+  ↓
+INFO ログ: "LLM 呼び出し開始 (ループ={_loop_count}, エージェント={agent_name})"
+  ↓
+LLM が推論を実行（1 ReActステップ）
+  ↓
+AfterModelCallEvent 発火
+  ↓
+[event.exception が存在する？]
+  - YES → カウントしない（誤カウント防止）→ ループ先頭に戻る
+  - NO  → _loop_count をインクリメント
+  ↓
+[_loop_count >= max_iterations（30）？]
+  - NO  → ループ先頭に戻る（次の ReActステップへ）
+  - YES → WARNING ログ出力
+           raise LoopLimitError(
+               current_iteration=self._loop_count,
+               max_iterations=self.max_iterations,
+               agent_name=self.agent_name,
+           )
+           （エージェントループが停止し呼び出し元の例外ハンドラに制御が移る）
+  ↓
+（ツール呼び出し時）
+BeforeToolCallEvent 発火
+  ↓
+INFO ログ: "ツール呼び出し開始 (ツール名={tool_name}, エージェント={agent_name})"
+  ↓
+ツール実行
+  ↓
+AfterToolCallEvent 発火
+  ↓
+INFO ログ: "ツール呼び出し完了 (ツール名={tool_name}, エージェント={agent_name})"
+  ↓
+（エージェント呼び出し完了時）
+AfterInvocationEvent 発火
+  ↓
+INFO ログ: "エージェント呼び出し完了: 合計ループ回数={_loop_count} (エージェント={agent_name})"
+（リセットは行わない）
+```
+
+#### 2.3.2 カウントの管理
+
+| タイミング | 操作 | 理由 |
+|-----------|------|------|
+| `BeforeInvocationEvent` 発火時 | `_loop_count = 0` にリセット | エージェントが再呼び出しされるたびに前回のカウントが持ち越されないようにする |
+| `AfterModelCallEvent` 発火時（正常） | `_loop_count += 1` | 1 ReActステップが完了するたびにカウントアップ |
+| `AfterModelCallEvent` 発火時（`event.exception` が存在する場合） | カウントしない | API エラー等による失敗ステップは ReAct の有効な1ステップとして扱わない |
+| `AfterInvocationEvent` 発火時 | リセットしない（ログ出力のみ） | 合計ループ回数を記録するためにリセットせずに保持する |
+
+---
+
+### 2.4 設定・構成
+
+#### 2.4.1 インスタンス変数
+
+| 変数名 | 型 | 説明 | 初期値 |
+|--------|-----|------|--------|
+| `max_iterations` | int | ループ上限回数（コンストラクタで設定） | — |
+| `agent_name` | str | エージェント名（コンストラクタで設定） | — |
+| `_loop_count` | int | 現在のループカウンタ | 0 |
+
+#### 2.4.2 設定値
+
+| 設定項目 | 設定値 | 定義場所 |
+|---------|--------|---------|
+| `MAX_LOOP_ITERATIONS` | 30 | `config/model_config.py` |
+| 全エージェント共通のループ上限 | 30回 | 共通設定方針.md 4.2 |
+
+#### 2.4.3 ログ設定
+
+| 設定項目 | 設定値 |
+|---------|--------|
+| ロガー名 | `handlers.loop_control_hook` |
+
+---
+
+## 3. 実装詳細
+
+### 3.1 クラス設計
+
+#### 3.1.1 LoopControlHook クラス
+
+```python
+import logging
+from strands.hooks import (
+    BeforeInvocationEvent,
+    AfterInvocationEvent,
+    AfterModelCallEvent,
+    BeforeModelCallEvent,
+    BeforeToolCallEvent,
+    AfterToolCallEvent,
+)
+
+logger = logging.getLogger("handlers.loop_control_hook")
+
+
+class LoopLimitError(Exception):
+    """ReActループ上限到達時に発生するカスタム例外。"""
+
+    def __init__(self, current_iteration: int, max_iterations: int, agent_name: str) -> None:
         self.current_iteration = current_iteration
         self.max_iterations = max_iterations
         self.agent_name = agent_name
         super().__init__(
-            f"ループ上限に達しました: {current_iteration}/{max_iterations} (agent: {agent_name})"
+            f"ReActループの上限（{max_iterations}回）に達しました。"
+            f"エージェント: {agent_name}, 現在のループ回数: {current_iteration}"
+        )
+
+
+class LoopControlHook:
+    """ReActループ回数を監視し上限到達時にループを強制停止するフック。"""
+
+    def __init__(self, max_iterations: int, agent_name: str) -> None:
+        self.max_iterations = max_iterations
+        self.agent_name = agent_name
+        self._loop_count: int = 0
+
+    def before_invocation(self, event: BeforeInvocationEvent) -> None:
+        """BeforeInvocationEvent ハンドラー: ループカウンタを 0 にリセットする。"""
+        self._loop_count = 0
+        logger.info(
+            f"エージェント呼び出し開始: ループカウンタをリセット"
+            f" (エージェント={self.agent_name}, 上限={self.max_iterations})"
+        )
+
+    def after_invocation(self, event: AfterInvocationEvent) -> None:
+        """AfterInvocationEvent ハンドラー: 合計ループ回数をINFOログ出力する（リセットは行わない）。"""
+        logger.info(
+            f"エージェント呼び出し完了: 合計ループ回数={self._loop_count}"
+            f" (エージェント={self.agent_name})"
+        )
+
+    def before_model_call(self, event: BeforeModelCallEvent) -> None:
+        """BeforeModelCallEvent ハンドラー: ループ回数をINFOログ出力する。"""
+        logger.info(
+            f"LLM 呼び出し開始 (ループ={self._loop_count}, エージェント={self.agent_name})"
+        )
+
+    def after_model_call(self, event: AfterModelCallEvent) -> None:
+        """AfterModelCallEvent ハンドラー: ループカウンタをインクリメントし上限監視する。"""
+        if getattr(event, "exception", None) is not None:
+            return
+
+        self._loop_count += 1
+        logger.info(
+            f"LLM 呼び出し完了: ループ={self._loop_count}/{self.max_iterations}"
+            f" (エージェント={self.agent_name})"
+        )
+
+        if self._loop_count >= self.max_iterations:
+            logger.warning(
+                f"ループ上限に達しました"
+                f" (ループ={self._loop_count}, 上限={self.max_iterations},"
+                f" エージェント={self.agent_name})"
+            )
+            raise LoopLimitError(
+                current_iteration=self._loop_count,
+                max_iterations=self.max_iterations,
+                agent_name=self.agent_name,
+            )
+
+    def before_tool_call(self, event: BeforeToolCallEvent) -> None:
+        """BeforeToolCallEvent ハンドラー: ツール名をINFOログ出力する。"""
+        tool_name = getattr(event, "tool_name", "unknown")
+        logger.info(
+            f"ツール呼び出し開始 (ツール名={tool_name}, エージェント={self.agent_name})"
+        )
+
+    def after_tool_call(self, event: AfterToolCallEvent) -> None:
+        """AfterToolCallEvent ハンドラー: ツール名をINFOログ出力する。"""
+        tool_name = getattr(event, "tool_name", "unknown")
+        logger.info(
+            f"ツール呼び出し完了 (ツール名={tool_name}, エージェント={self.agent_name})"
         )
 ```
 
-### 3.2 フィールド定義
+---
 
-| フィールド名 | 型 | 説明 |
-|------------|-----|------|
-| `current_iteration` | `int` | ループ上限到達時の現在のイテレーション数 |
-| `max_iterations` | `int` | 設定されたループ上限値 |
-| `agent_name` | `str` | ループ上限に達したエージェント名 |
+### 3.2 エラーハンドリング
 
-### 3.3 使用例
-
-```python
-# LoopControlHook 内での raise
-raise LoopLimitError(
-    current_iteration=self._iteration_count,
-    max_iterations=self._max_iterations,
-    agent_name=self._agent_name,
-)
-
-# 呼び出し元エージェントでのキャッチ（例: AG-001）
-except LoopLimitError as e:
-    logger.warning(
-        "[AG-001] ループ上限到達: %s/%s",
-        e.current_iteration, e.max_iterations,
-        extra={"session_id": session_id},
-    )
-    message = error_handler.handle_loop_limit_error(e)
-    print(message)
-    continue
-```
-
-### 3.4 インポートパス
-
-他モジュールからのインポートは以下のパスを使用する:
-
-```python
-from hooks.loop_control_hook import LoopLimitError
-```
+| エラー種別 | 条件 | 対応 |
+|-----------|------|------|
+| LoopLimitError | `_loop_count >= max_iterations` 時 | `raise LoopLimitError(current_iteration=..., max_iterations=..., agent_name=...)` でエージェントループを停止する。呼び出し元エージェントがエラーとして処理する |
+| `BeforeInvocationEvent` ハンドラー内の例外 | リセット処理中に予期しない例外が発生した場合 | `logger.error` で記録し、例外を再送出せずにリセット処理を継続する |
+| `AfterModelCallEvent` ハンドラー内の例外（LoopLimitError 以外） | カウントアップ処理中に予期しない例外が発生した場合 | `logger.error` で記録し、例外を再送出せずにループを継続する |
 
 ---
 
-## 4. ビジネスロジック
+### 3.3 ログ出力
 
-### 4.1 ループカウントの仕組み
-
-#### 処理フロー
-
-```
-エージェント呼び出し開始
-  ↓
-BeforeInvocationEvent発火
-  → _iteration_count = 0 にリセット
-  → INFO ログ: ループカウンタリセット
-  ↓
-[ReActループ開始]
-  ↓
-LLM呼び出し前
-  ↓
-BeforeModelCallEvent発火
-  → INFO ログ: 現在のループ回数（count/max）
-  ↓
-LLMが思考・ツール選択を実行
-  ↓
-AfterModelCallEvent発火
-  → event.exception が存在する場合: スキップ（カウントしない）
-  → event.exception がない場合: _iteration_count += 1
-    → _iteration_count < max_iterations: ループ継続
-    → _iteration_count >= max_iterations:
-        WARNING ログ: ループ上限到達
-        raise LoopLimitError(current_iteration, max_iterations, agent_name)
-  ↓
-ツール実行（LoopLimitErrorが発生しなかった場合）
-  ↓
-BeforeToolCallEvent発火
-  → INFO ログ: ツール呼び出し開始（tool_name）
-  ↓
-（ツール実行）
-  ↓
-AfterToolCallEvent発火
-  → INFO ログ: ツール呼び出し完了（tool_name）
-  ↓
-[追加区間がある場合 → LLM呼び出しへ戻る]
-  ↓
-[全区間処理完了またはループ停止]
-  ↓
-AfterInvocationEvent発火
-  → INFO ログ: 合計ループ回数（total_iterations）
-  ↓
-エージェント呼び出し完了
-```
-
-### 4.2 LoopLimitErrorの伝播
-
-`LoopLimitError` は `hooks/loop_control_hook.py` で定義するカスタム例外クラス。LoopControlHookが raise すると、呼び出し元エージェントの対話ループ内で直接キャッチされる。
-
-```python
-# 呼び出し元エージェントでのキャッチパターン（AG-001/AG-002/AG-003 共通）
-from hooks.loop_control_hook import LoopLimitError
-
-except LoopLimitError as e:
-    logger.warning(
-        "[AG-XXX] ループ上限到達: %s/%s, agent_name=%s",
-        e.current_iteration, e.max_iterations, e.agent_name,
-        extra={"session_id": session_id},
-    )
-    message = error_handler.handle_loop_limit_error(e)
-    print(message)
-    continue  # AG-001: ループ継続 / AG-002/AG-003: str を return
-```
-
-### 4.3 カウントアップ対象の定義
-
-**カウントアップする**（AfterModelCallEventが発火し `event.exception` がない）ケース:
-- LLMが思考・ツール選択のレスポンスを正常に返した後
-
-**カウントアップしない**ケース:
-- `event.exception` が存在する場合（LLMコール自体が失敗した場合等）
-- Strands Agents SDKの組み込みリトライ中: リトライはAfterModelCallEvent発火前に処理されるためカウントアップされない
+| レベル | タイミング | メッセージ |
+|--------|-----------|-----------|
+| INFO | `BeforeInvocationEvent` でカウンタリセット時 | `"エージェント呼び出し開始: ループカウンタをリセット (エージェント={agent_name}, 上限={max_iterations})"` |
+| INFO | `AfterInvocationEvent` で呼び出し完了時 | `"エージェント呼び出し完了: 合計ループ回数={_loop_count} (エージェント={agent_name})"` |
+| INFO | `BeforeModelCallEvent` で LLM 呼び出し開始時 | `"LLM 呼び出し開始 (ループ={_loop_count}, エージェント={agent_name})"` |
+| INFO | `AfterModelCallEvent` でカウントアップ時 | `"LLM 呼び出し完了: ループ={n}/{max_iterations} (エージェント={agent_name})"` |
+| WARNING | ループ上限到達時 | `"ループ上限に達しました (ループ={n}, 上限={max_iterations}, エージェント={agent_name})"` |
+| INFO | `BeforeToolCallEvent` でツール呼び出し開始時 | `"ツール呼び出し開始 (ツール名={tool_name}, エージェント={agent_name})"` |
+| INFO | `AfterToolCallEvent` でツール呼び出し完了時 | `"ツール呼び出し完了 (ツール名={tool_name}, エージェント={agent_name})"` |
+| ERROR | ハンドラー内予期しない例外時 | `"ハンドラー内で予期しないエラーが発生しました ({handler_name}): {error_message}"` |
 
 ---
 
-## 5. エラーハンドリング
+## 4. データ設計
 
-| エラー種別 | 条件 | 対応 | 備考 |
-|-----------|------|------|------|
-| LoopLimitError raise失敗 | LoopLimitErrorの送出自体に失敗した場合 | ログ出力後にraise（再送出） | フレームワーク異常として扱う |
-| BeforeInvocationEvent処理失敗 | カウンタリセット中に例外が発生した場合 | ログ出力して処理継続（カウンタは0を維持） | リセット失敗でループを中断しない |
+LoopControlHook は永続的なデータを読み書きしない。ループカウンタ（`_loop_count`）はインスタンス変数としてメモリ上にのみ保持し、セッション終了時に消去される。
 
 ---
 
-## 6. ログ出力
+## 5. 補足情報
 
-| レベル | イベント | メッセージ |
-|--------|---------|-----------|
-| INFO | BeforeInvocationEvent（カウンタリセット） | `"[LoopControlHook] ループカウンタリセット: agent_name={agent_name}"` |
-| INFO | BeforeModelCallEvent（ループ回数） | `"[LoopControlHook] ループ回数: count={count}/{max}, agent_name={agent_name}"` |
-| INFO | BeforeToolCallEvent（ツール呼び出し開始） | `"[LoopControlHook] ツール呼び出し開始: tool_name={tool_name}, agent_name={agent_name}"` |
-| INFO | AfterToolCallEvent（ツール呼び出し完了） | `"[LoopControlHook] ツール呼び出し完了: tool_name={tool_name}, agent_name={agent_name}"` |
-| WARNING | AfterModelCallEvent（ループ上限到達） | `"[LoopControlHook] ループ上限到達: count={count}/{max}, agent_name={agent_name}"` |
-| INFO | AfterInvocationEvent（合計ループ回数） | `"[LoopControlHook] 呼び出し完了: total_iterations={count}, agent_name={agent_name}"` |
+### 5.1 実装上の注意点
 
----
+1. **各エージェントが独立したインスタンスを持つ**
+   - AG-001/AG-002/AG-003 それぞれが個別の LoopControlHook インスタンスを保持する
+   - インスタンス間でカウンタを共有しない（各エージェントのループカウンタは独立して管理される）
 
-## 7. 補足情報
+2. **BeforeInvocationEvent によるリセットの重要性**
+   - `_agent_instances` キャッシュにより AG-002/AG-003 の Agent インスタンスは再利用される
+   - `BeforeInvocationEvent` でカウンタを 0 にリセットすることで、前回のセッションのカウントが持ち越されず、毎回正しく30回から監視を開始できる
 
-### 7.1 実装上の注意点
+3. **LLM エラー時のカウント除外**
+   - Bedrock API エラー時に LLM 呼び出しが失敗した場合は `event.exception` が存在する
+   - `getattr(event, "exception", None) is not None` でチェックすることで、例外属性が存在しない SDK バージョンでも安全に動作する
 
-1. **インスタンスは各エージェントに独立して割り当てる**
-   - AG-001・AG-002・AG-003それぞれにLoopControlHookの独立したインスタンスを割り当てる
-   - `_iteration_count` はインスタンス変数であるため、エージェント間でカウンタが共有されることはない
-   - シングルスレッド処理のため、同一インスタンスへの同時アクセスは発生しない
+4. **LoopLimitError の定義場所**
+   - `LoopLimitError` は `handlers/loop_control_hook.py` 内で定義する
+   - 他のモジュールからインポートする場合は `from handlers.loop_control_hook import LoopLimitError` を使用する
 
-2. **AfterModelCallEventの発火タイミングとevent.exception**
-   - AfterModelCallEventはLLMが正常レスポンスを返した後に発火する
-   - `event.exception` が存在する場合はカウントをスキップする（LLMコール失敗時の誤カウントを防止する）
+5. **AfterInvocationEvent でのリセット禁止**
+   - `AfterInvocationEvent` ハンドラーでは合計ループ回数のINFOログ出力のみ行い、`_loop_count` のリセットは行わない
+   - リセットは次回の `BeforeInvocationEvent` 発火時にのみ行う
 
-3. **AfterInvocationEventではカウンタリセットを行わない**
-   - `AfterInvocationEvent` のハンドラーでは「合計ループ回数のINFOログ出力」のみ行う
-   - ループカウンタのリセットは `BeforeInvocationEvent` のみで行う
+### 5.2 パフォーマンス考慮事項
 
-4. **LoopLimitErrorのフィールド**
-   - `raise LoopLimitError(...)` では `current_iteration`・`max_iterations`・`agent_name` の3フィールドすべてを引数として渡すこと
-
-5. **テンプレートファイルのパスと出力ディレクトリ**
-   - テンプレートファイルのパスは `data/templates/` を使用する
-   - 出力ディレクトリは `data/output/{session_id}/` を使用する
+1. **ハンドラーのオーバーヘッド**
+   - 全ハンドラーはカウンタの整数操作とログ出力のみであり、処理時間への影響は無視できる
 
 ---
 
-### 7.2 パフォーマンス考慮事項
+## 6. 依存関係
 
-1. **軽量な実装の維持**
-   - LoopControlHookはカウンタのインクリメントと比較のみを行う軽量な処理とする
-   - 各イベントハンドラーの処理時間は1ms以下を目標とする
+### 6.1 外部ライブラリ
+- `strands`: Strands Agents SDK
+  - `BeforeInvocationEvent`: フックイベントクラス
+  - `AfterInvocationEvent`: フックイベントクラス
+  - `AfterModelCallEvent`: フックイベントクラス
+  - `BeforeModelCallEvent`: フックイベントクラス
+  - `BeforeToolCallEvent`: フックイベントクラス
+  - `AfterToolCallEvent`: フックイベントクラス
+- `logging`: Python 標準ライブラリ
 
----
-
-### 7.3 セキュリティ考慮事項
-
-1. **ループ上限の不変性**
-   - `_max_iterations` は `__init__` で設定後、変更できないようにする（必要に応じてsetterを設けない）
-   - 実行中の `max_iterations` 変更を防止し、一貫した上限制御を保証する
-
----
-
-## 8. 依存関係
-
-### 8.1 外部ライブラリ
-- `strands.hooks`:
-  - `HookProvider`: フックプロバイダー基底クラス
-  - `HookRegistry`: フックレジストリ
-  - `BeforeInvocationEvent`: エージェント呼び出し開始イベント
-  - `BeforeModelCallEvent`: LLM呼び出し前イベント
-  - `AfterModelCallEvent`: LLM呼び出し完了後イベント
-  - `BeforeToolCallEvent`: ツール呼び出し前イベント
-  - `AfterToolCallEvent`: ツール呼び出し完了後イベント
-  - `AfterInvocationEvent`: エージェント呼び出し完了後イベント
-- `logging`: Pythonの標準ロギングモジュール
-
-### 8.2 内部モジュール
-- `hooks/loop_control_hook.py`:
-  - `LoopLimitError`: ループ上限到達を表すカスタム例外クラス（同ファイル内で定義）
+### 6.2 内部モジュール
+- `config/model_config.py`
+  - `MAX_LOOP_ITERATIONS`: ループ上限回数（全エージェント共通値 = 30）
 
 ---
 
-## 9. テスト観点
+## 7. テスト観点
 
-### 9.1 機能テスト
-- BeforeInvocationEvent発火時にループカウンタが0にリセットされること
-- BeforeModelCallEvent発火時に現在のループ回数がINFOレベルでログ出力されること
-- AfterModelCallEvent発火ごとにループカウンタが1ずつインクリメントされること（`event.exception` がない場合）
-- BeforeToolCallEvent発火時にツール名がINFOレベルでログ出力されること
-- AfterToolCallEvent発火時にツール名がINFOレベルでログ出力されること
-- AfterInvocationEvent発火時に合計ループ回数がINFOレベルでログ出力されること（カウンタリセットは行わないこと）
-- カウンタが30（max_iterations）に達した時点で `LoopLimitError` が raise されること
-- 29回目のAfterModelCallEventでは `LoopLimitError` が raise されないこと（上限未到達）
-- `raise LoopLimitError(...)` に `current_iteration`・`max_iterations`・`agent_name` の3フィールドが渡されること
+### 7.1 機能テスト
+- `BeforeInvocationEvent` 発火時にループカウンタが 0 にリセットされること
+- `AfterModelCallEvent` が29回発火してもループが継続すること（カウンタ = 29）
+- `AfterModelCallEvent` が30回目に発火したとき `LoopLimitError` が発生すること
+- `LoopLimitError` が `current_iteration=30`, `max_iterations=30`, `agent_name` の3フィールドを持つこと
+- `BeforeModelCallEvent` 発火時に INFO ログが出力されること
+- `BeforeToolCallEvent` 発火時にツール名が INFO ログに出力されること
+- `AfterToolCallEvent` 発火時にツール名が INFO ログに出力されること
+- `AfterInvocationEvent` 発火時に合計ループ回数が INFO ログに出力されること（リセットされないこと）
 
-### 9.2 異常系テスト
-- `event.exception` が存在するAfterModelCallEventでカウンタがインクリメントされないこと
-- LLMコール失敗時（event.exceptionあり）にカウンタがインクリメントされないこと
-- AfterInvocationEvent発火後にカウンタがリセットされないこと（BeforeInvocationEventでのみリセット）
+### 7.2 異常系テスト
+- `event.exception` が存在する場合に `AfterModelCallEvent` が発火してもカウンタがインクリメントされないこと
+- `BeforeInvocationEvent` 後に `AfterModelCallEvent` が30回発火し、その後再度 `BeforeInvocationEvent` が発火するとカウンタが 0 にリセットされること（前回カウントの持ち越しなし）
 
-### 9.3 性能テスト
-- 各イベントハンドラーの処理時間が1ms以下であること
+### 7.3 境界値テスト
+- カウンタが 29 のとき（上限-1）`AfterModelCallEvent` が発火してもループが継続すること
+- カウンタが 30 のとき（上限到達）`LoopLimitError` が発生すること
+- `LoopLimitError` 発生時のログレベルが WARNING であること
 
-### 9.4 境界値テスト
-- `max_iterations=1` でAfterModelCallEventが1回発火した時点で `LoopLimitError` が raise されること
-- `max_iterations=30` でAfterModelCallEventが30回発火した時点で `LoopLimitError` が raise されること
-
-### 9.5 統合テスト
-- AG-001でLoopControlHookが登録された状態で30回ループするシナリオで `LoopLimitError` が raise されること
-- AG-002でLoopControlHookが登録された状態で、AG-002インスタンスと独立したカウンタが機能すること（AG-001のループカウントに影響されない）
-- 呼び出し元エージェントが `LoopLimitError` をキャッチして ErrorHandler に委譲し、ユーザー向けメッセージが生成されること
+### 7.4 性能テスト
+- LoopControlHook によって ReActループが30回で終了することを確認（各エージェントで個別に測定）
 
 ---
 
-## 10. 設定値
+## 8. 設定値
 
-### 10.1 ループ制御設定
-
-| 設定項目 | 設定値 | 適用エージェント |
-|---------|--------|----------------|
-| max_iterations | `30` | AG-001, AG-002, AG-003（全エージェント共通） |
-
-### 10.2 テンプレート・出力パス
-
-| 項目 | パス |
-|------|------|
-| テンプレートファイル | `data/templates/` |
-| 出力ディレクトリ | `data/output/{session_id}/` |
+### 8.1 定数
+- ループ上限回数: `MAX_LOOP_ITERATIONS = 30`（`config/model_config.py` で定義）
+- `LoopLimitError` の定義場所: `handlers/loop_control_hook.py`
 
 ---
 
-## 11. 変更履歴
+## 9. 変更履歴
 
 | 日付 | バージョン | 変更内容 |
 |------|-----------|---------|
-| 2026-04-28 | 1.0 | 新フォーマットで作成 |
-| 2026-04-28 | 1.1 | 修正#6：LoopLimitErrorをカスタム例外クラスとして定義・定義モジュール明示、BeforeModelCallEvent/BeforeToolCallEvent/AfterToolCallEventのINFOログ追加、AfterInvocationEventをリセットなし・ログのみに変更、AfterModelCallEventのevent.exception存在時スキップ追加、max_iterations=30に変更、ループ上限到達時raise LoopLimitError対応、LoopLimitErrorの3フィールド定義 |
+| 2026-05-01 | 1.0 | 初版作成 |
+| 2026-05-01 | 1.1 | LoopLimitError カスタム例外クラスに変更、新イベントハンドラー追加（BeforeModelCallEvent/BeforeToolCallEvent/AfterToolCallEvent/AfterInvocationEvent）、event.exception チェックに変更、ログメッセージ日本語化、MAX_LOOP_ITERATIONS を 30 に変更 |

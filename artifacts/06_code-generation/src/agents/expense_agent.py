@@ -1,239 +1,180 @@
 """経費精算申請エージェント（AG-003）
 
-AG-001からの委任を受けて経費精算申請フロー全体を実行する。
+AG-001 からツールとして呼び出される経費精算申請書作成専門エージェント。
+経費情報の収集・OCR 自動抽出・経費区分判断・承認・申請書生成を担当する。
 """
 import logging
-from datetime import date
-from typing import Dict
+from datetime import date, timedelta
 
-from dateutil.relativedelta import relativedelta
-from strands import Agent, tool, ToolContext
+from strands import Agent, tool, ModelRetryStrategy
+from strands.types.tools import ToolContext
 from strands.agent.conversation_manager import SlidingWindowConversationManager
-from strands.session.file_session_manager import FileSessionManager
-from strands.types.exceptions import ContextWindowOverflowException, MaxTokensReachedException
+from strands_tools import image_reader
 
-from agent_knowledge import receipt_policies as rp
-from config.model_config import ModelConfig
+from tools.application_generator import generate_expense_application
+from session.session_manager import SessionManagerFactory
+from handlers.human_approval_hook import HumanApprovalHook
 from handlers.error_handler import ErrorHandler
-from handlers.exceptions import LoopLimitError
-from hooks.human_approval_hook import HumanApprovalHook
-from hooks.loop_control_hook import LoopControlHook
-from tools.output_generator import generate_expense_form
+from handlers.loop_control_hook import LoopControlHook, LoopLimitError
+from prompt.prompt_expense import build_expense_prompt
+from config.model_config import ModelConfig
+from models.data_models import InvocationState
 
-_logger = logging.getLogger(__name__)
-_expense_agent_instances: Dict[str, Agent] = {}
+logger = logging.getLogger("agents.expense_agent")
 
+MAX_LOOP_ITERATIONS = 30
+WINDOW_SIZE = 15
+SESSION_STORAGE_PATH = "data/sessions"
 
-def _mask_applicant_name(name: str) -> str:
-    if not name:
-        return ""
-    return name[0] + "***"
-
-
-def _is_valid_date(date_str: str) -> bool:
-    try:
-        date.fromisoformat(date_str)
-        return True
-    except (ValueError, TypeError):
-        return False
+_agent_instances: dict[str, Agent] = {}
 
 
-def _build_expense_agent_system_prompt(
-    application_date: str,
-    deadline_months: int,
-    manager_approval_threshold: int,
-    expense_categories: list,
-) -> str:
-    try:
-        app_date = date.fromisoformat(application_date)
-        deadline_date = (app_date - relativedelta(months=deadline_months)).isoformat()
-    except (ValueError, TypeError):
-        deadline_date = ""
+def _approval_callback(tool_name: str, tool_params: dict) -> tuple:
+    """APR-001 承認コールバック: CLI で承認・修正・キャンセルを受け付ける。
 
-    categories_str = "・".join(expense_categories)
-    return f"""あなたは社内申請AIシステムの「経費精算申請エージェント」です。
-申請者名と申請日はすでに設定済みです（invocation_stateから取得しています）。
-申請日（application_date）: {application_date}
-申請期限基準日（この日付以降の経費発生日のみ申請可能）: {deadline_date}
+    Args:
+        tool_name: ツール名
+        tool_params: ツールパラメータ
 
-【申請バリデーションルール（agent_knowledge/receipt_policies.py より）】
-- 申請期限: 経費発生日から{deadline_months}ヶ月以内
-- 上長承認が必要な閾値: 経費合計 {manager_approval_threshold}円超
-- 経費区分: {categories_str}
+    Returns:
+        tuple: (bool, str) - (True, "") = 承認, (False, "CANCEL") = キャンセル, (False, detail) = 修正
+    """
+    print(f"\n--- APR-001: 申請書生成確認 ({tool_name}) ---")
+    print("申請書を生成してよろしいですか？")
+    print("  OK / ok / はい / yes → 承認")
+    print("  修正 / modify → 内容を修正する")
+    print("  キャンセル / cancel → 取り消す")
 
-【あなたの役割】
-経費精算申請フロー全体（領収書読み取り・経費情報収集・経費区分判断・申請書生成・ルールチェック・最終提示）を担当します。
-TOOL-001（交通費計算ツール）は使用しません。
+    for _ in range(3):
+        try:
+            user_input = input("選択してください: ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            return (False, "CANCEL")
 
-【処理フロー】
-1. 領収書画像を受け取る（CF-004 Step 1-2）
-   - ユーザーへ領収書画像の提出を促す（提出しない場合は「スキップ」と入力してもらう）
-   - 画像が提出された場合：店舗名・金額・日付・品目を読み取る（BRL-16）
-     - 読み取り成功：読み取り結果をユーザーへ提示し確認を取る
-     - 読み取り失敗：Step 4（手動入力）へ遷移する
-   - 画像が提出されない場合（「スキップ」等）：Step 4（手動入力）へ遷移する
+        if user_input in {"ok", "はい", "yes", "o", "y"}:
+            return (True, "")
+        elif user_input in {"キャンセル", "cancel", "c", "いいえ", "no", "n"}:
+            return (False, "CANCEL")
+        elif user_input in {"修正", "modify", "m"}:
+            detail = input("修正内容を入力してください: ").strip()
+            return (False, detail or "修正")
+        else:
+            print("認識できない入力です。OK / 修正 / キャンセル を入力してください。")
 
-2. 経費情報の確認または手動入力（CF-004 Step 3-4）
-   - 自動抽出の場合：抽出結果（店舗名・金額・日付・品目）をユーザーが確認する
-   - 手動入力の場合：店舗名・金額・日付・品目をユーザーが入力する
-
-3. 経費区分の自動判断（CF-004 Step 5、BRL-17）
-   - 品目から経費区分（{categories_str}）を自動判断する
-   - 判断結果をユーザーへ提示し確認を取る
-   - 判断不能または異議あり：4択（{categories_str}）をユーザーへ提示する
-
-   【経費区分の判断基準（BRL-17）】
-   - 事務用品費：文房具、印刷用紙、コピー用品、事務用品全般
-   - 宿泊費：ホテル、旅館、宿泊施設への支払い
-   - 資格精算費：資格試験費用、受験料、資格取得に関する教材費
-   - その他経費：上記3区分に該当しない経費（会議費、交際費、研修費等）
-
-4. 業務目的を収集する（CF-004 Step 6-7、BRL-20）
-   - 業務目的が入力されていない場合は入力を促す
-
-5. 収集済み申請情報をテキストとして整理・提示する（ドラフト提示ステップ）
-   - 申請者名・申請日・経費明細（購入日/店舗名/品目/経費区分/金額）・業務目的・合計金額を提示する
-   - ※この時点ではTOOL-002を呼び出さない（テキスト提示のみ）
-   - OK/修正/キャンセルの3択を取得する（BRL-06）
-
-6. OK承認後にTOOL-002（generate_expense_form）を呼び出す（HumanApprovalHookが承認ゲートとして機能）
-   - applicant_name, application_date, items（経費明細リスト）, business_purpose を渡す
-   - 成功時：生成されたファイルパスをユーザーへ提示する
-   - 失敗時：エラーメッセージをユーザーへ提示する
-
-7. 申請ルールチェックを実施する（CF-006）
-   - 申請期限チェック（BRL-18）: 全経費発生日が申請期限基準日（{deadline_date}）以降であることを確認する
-     - 超過している場合はCF-008へ遷移し「申し訳ありません。経費発生日から3ヶ月を超えているため、この申請は受け付けられません。総務部門にご相談ください。」と通知する
-   - 上長承認要否判定（BRL-19）: 経費金額の合計が{manager_approval_threshold}円を超える場合はCF-009へ遷移し上長承認確認を促す
-   - 差し戻しリスク評価（BRL-08）: リスクが高い場合は警告を提示する（判定基準は要件上未定義）
-
-8. 申請書ドラフト・チェック結果・最終提示（CF-007）
-   - 申請書ドラフトのファイルパスを提示する
-   - 提出操作はユーザーが実施すること（BRL-09。申請書の自動提出禁止）
-
-【修正選択時】
-- CF-004 Step 1（領収書提出促し）へ戻り、収集情報を最初からやり直す
-
-【キャンセル選択時】
-- 申請を中断し、セッションを終了する
-
-【禁止事項】
-- 申請書の自動提出（BRL-09）
-- ドラフト提示ステップ（テキスト整理・提示）でのTOOL-002の呼び出し
-- AG-001・AG-002への委任（循環呼び出し禁止）
-- TOOL-001（calculate_transport_expense）の使用
-
-【エラー時の振る舞い】
-- TOOL-002のテンプレートファイルが見つからない・ファイル書き込みエラー等のシステム系エラーが発生した場合は、エラー内容を要約して呼び出し元エージェント（AG-001）に返すこと
-- ループ上限（30回）に達した場合は「処理が複雑すぎるため終了します。最初からやり直すには「reset」と入力してください。」とユーザーへ提示する
-"""
+    return (False, "CANCEL")
 
 
-class ExpenseAgentFactory:
-    """AG-003エージェントインスタンスをsession_idキーで管理するファクトリクラス"""
+def _build_prompt(applicant_name: str, application_date: str) -> str:
+    """AG-003 のシステムプロンプトを動的生成する。
 
-    _instances: Dict[str, Agent] = {}
-    _logger = logging.getLogger(__name__)
+    Args:
+        applicant_name: 申請者名
+        application_date: 申請日（YYYY-MM-DD 形式）
 
-    @classmethod
-    def get_agent(cls, session_id: str, application_date: str) -> Agent:
-        if session_id not in cls._instances:
-            session_manager = FileSessionManager(
-                session_id=session_id,
-                storage_dir="data/sessions",
-            )
-            cls._instances[session_id] = Agent(
-                model=ModelConfig.get_model(),
-                system_prompt=_build_expense_agent_system_prompt(
-                    application_date,
-                    rp.DEADLINE_MONTHS,
-                    rp.MANAGER_APPROVAL_THRESHOLD,
-                    rp.EXPENSE_CATEGORIES,
-                ),
-                tools=[generate_expense_form],
-                conversation_manager=SlidingWindowConversationManager(
-                    window_size=15,
-                    should_truncate_results=True,
-                ),
-                hooks=[
-                    HumanApprovalHook(
-                        tool_names=["generate_expense_form"],
-                    ),
-                    LoopControlHook(max_iterations=30, agent_name="expense_agent"),
-                ],
-                session_manager=session_manager,
-                callback_handler=None,
-            )
-            cls._logger.info("[AG-003] エージェントインスタンス生成: session_id=%s", session_id)
-        return cls._instances[session_id]
-
-    @classmethod
-    def remove(cls, session_id: str) -> None:
-        cls._instances.pop(session_id, None)
+    Returns:
+        str: システムプロンプト全文
+    """
+    return build_expense_prompt(applicant_name, application_date)
 
 
 @tool(context=True)
-def expense_application_agent_tool(query: str, tool_context: ToolContext) -> str:
-    """経費精算申請フロー全体（経費情報収集・申請書生成・ルールチェック・最終提示）を実行する。
+def handle_expense_application(query: str, tool_context: ToolContext) -> str:
+    """経費精算申請書作成エージェント。
 
-    AG-001が経費精算申請と判定した後に呼び出す。
-    invocation_stateにsession_id・applicant_name・application_dateが設定されていること。
+    AG-001から委譲された経費精算申請フロー全体（経費情報収集・OCR自動抽出・経費区分判断・承認・申請書生成・チェック）を実行する。
+
+    Args:
+        query: AG-001 からの委譲指示文字列
+        tool_context: invocation_state を含む ToolContext
+
+    Returns:
+        str: 申請書生成完了通知・申請内容チェック結果を含む文字列
     """
-    error_handler = ErrorHandler()
-    state = tool_context.invocation_state
+    state = tool_context.invocation_state or {}
     session_id = state.get("session_id", "")
     applicant_name = state.get("applicant_name", "")
     application_date = state.get("application_date", "")
 
-    _logger.info(
-        "[AG-003] 経費精算申請エージェント呼び出し: session_id=%s, applicant_name=%s, "
-        "application_date=%s, query=%.50s",
-        session_id,
-        _mask_applicant_name(applicant_name),
-        application_date,
-        query,
+    logger.info(
+        f"経費精算申請エージェント呼び出し開始: session_id={session_id}, "
+        f"クエリ先頭={query[:50]}"
     )
 
-    if not applicant_name:
-        return "エラー: 申請者名が設定されていません。"
-    if not _is_valid_date(application_date):
-        return "エラー: 申請日の形式が不正です。"
+    try:
+        InvocationState(
+            session_id=session_id,
+            applicant_name=applicant_name,
+            application_date=application_date,
+        )
+    except Exception as e:
+        logger.error(
+            f"経費精算申請エージェント: バリデーションエラー: session_id={session_id}",
+            exc_info=True,
+        )
+        return ErrorHandler.handle_validation_error(e)
 
-    agent = ExpenseAgentFactory.get_agent(session_id, application_date)
-    agent_state = {
-        "applicant_name": applicant_name,
-        "application_date": application_date,
-        "session_id": session_id,
-    }
+    if session_id not in _agent_instances:
+        logger.info(f"経費精算申請エージェント: インスタンス生成: session_id={session_id}")
+        session_manager = SessionManagerFactory.create(
+            session_id=session_id,
+            storage_path=SESSION_STORAGE_PATH,
+        )
+        _agent_instances[session_id] = Agent(
+            model=ModelConfig.get_model(),
+            system_prompt=_build_prompt(applicant_name, application_date),
+            tools=[generate_expense_application, image_reader],
+            conversation_manager=SlidingWindowConversationManager(
+                window_size=WINDOW_SIZE,
+                should_truncate_results=True,
+                per_turn=False,
+            ),
+            callback_handler=None,
+            retry_strategy=ModelRetryStrategy(
+                max_attempts=6, initial_delay=4, max_delay=240
+            ),
+            hooks=[
+                LoopControlHook(
+                    max_iterations=MAX_LOOP_ITERATIONS,
+                    agent_name="expense_agent",
+                ),
+                HumanApprovalHook(approval_callback=_approval_callback),
+            ],
+            session_manager=session_manager,
+        )
+    else:
+        logger.info(f"経費精算申請エージェント: インスタンス再利用: session_id={session_id}")
 
     try:
-        response = agent(query, invocation_state=agent_state)
+        response = _agent_instances[session_id](query, invocation_state=state)
         return str(response)
     except LoopLimitError as e:
-        _logger.warning(
-            "[AG-003] ループ上限到達: %s/%s, session_id=%s, query=%.50s",
-            e.current_iteration, e.max_iterations, session_id, query,
+        logger.warning(
+            f"経費精算申請エージェント: ループ上限到達: session_id={session_id}, "
+            f"クエリ先頭={query[:50]}"
         )
-        return error_handler.handle_loop_limit_error(e)
-    except ContextWindowOverflowException as e:
-        _logger.warning(
-            "[AG-003] コンテキストウィンドウ超過: session_id=%s, query=%.50s", session_id, query,
-        )
-        return error_handler.handle_context_window_error(e)
-    except MaxTokensReachedException as e:
-        _logger.warning(
-            "[AG-003] 最大トークン数到達: session_id=%s, query=%.50s", session_id, query,
-        )
-        return error_handler.handle_max_tokens_error(e)
-    except RuntimeError as e:
-        _logger.error(
-            "[AG-003] RuntimeError: %s, session_id=%s, query=%.50s",
-            str(e), session_id, query, exc_info=True,
-        )
-        return error_handler.handle_runtime_error(e)
+        return ErrorHandler.handle_loop_limit_error(e)
     except Exception as e:
-        _logger.error(
-            "[AG-003] 予期しないエラー: %s, session_id=%s, query=%.50s",
-            str(e), session_id, query, exc_info=True,
-        )
-        return error_handler.handle_unexpected_error(e)
+        if "ContextWindowOverflow" in type(e).__name__:
+            logger.warning(
+                f"経費精算申請エージェント: コンテキストウィンドウ超過: session_id={session_id}"
+            )
+            return ErrorHandler.handle_context_window_error(e)
+        elif "MaxTokensReached" in type(e).__name__:
+            logger.warning(
+                f"経費精算申請エージェント: トークン上限超過: session_id={session_id}"
+            )
+            return ErrorHandler.handle_max_tokens_error(e)
+        elif isinstance(e, RuntimeError):
+            logger.error(
+                f"経費精算申請エージェント: ランタイムエラー: session_id={session_id}, "
+                f"クエリ先頭={query[:50]}",
+                exc_info=True,
+            )
+            return ErrorHandler.handle_runtime_error(e)
+        else:
+            logger.error(
+                f"経費精算申請エージェント: 想定外エラー: session_id={session_id}, "
+                f"クエリ先頭={query[:50]}",
+                exc_info=True,
+            )
+            return ErrorHandler.handle_unexpected_error(e)

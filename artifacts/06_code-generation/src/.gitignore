@@ -1,34 +1,13 @@
-# Python
+.env
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-.Python
+logs/
+storage/
+output/
+data/output/
+.pytest_cache/
 *.egg-info/
 dist/
 build/
-.eggs/
-
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Environment variables
-.env
-
-# Data directories (generated at runtime)
-data/output/
-data/sessions/
-logs/*.log
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Test cache
-.pytest_cache/
-.coverage
-htmlcov/

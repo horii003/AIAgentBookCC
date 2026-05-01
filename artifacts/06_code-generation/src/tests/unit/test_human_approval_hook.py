@@ -1,156 +1,73 @@
-"""Unit tests for hooks/human_approval_hook.py"""
+"""human_approval_hook.py の単体テスト"""
 import pytest
 from unittest.mock import MagicMock, patch
 
-from hooks.human_approval_hook import HumanApprovalHook, _normalize_input
+from handlers.human_approval_hook import HumanApprovalHook, APPROVAL_TOOL_NAMES
 
 
-# ---- _normalize_input ----
-
-class TestNormalizeInput:
-    def test_ok_upper(self):
-        assert _normalize_input("OK") == "OK"
-
-    def test_ok_lower(self):
-        assert _normalize_input("ok") == "OK"
-
-    def test_ok_number(self):
-        assert _normalize_input("1") == "OK"
-
-    def test_ok_hai(self):
-        assert _normalize_input("はい") == "OK"
-
-    def test_shyuusei(self):
-        assert _normalize_input("修正") == "修正"
-
-    def test_shyuusei_number(self):
-        assert _normalize_input("2") == "修正"
-
-    def test_cancel_katakana(self):
-        assert _normalize_input("キャンセル") == "キャンセル"
-
-    def test_cancel_english(self):
-        assert _normalize_input("cancel") == "キャンセル"
-
-    def test_cancel_number(self):
-        assert _normalize_input("3") == "キャンセル"
-
-    def test_invalid_returns_none(self):
-        assert _normalize_input("abc") is None
-
-    def test_empty_returns_none(self):
-        assert _normalize_input("") is None
-
-
-# ---- HumanApprovalHook ----
-
-def _make_tool_use_dict(tool_name: str, params: dict = None):
-    """Create a mock tool_use object with dict-like access."""
-    d = {"name": tool_name, "input": params or {}}
-    mock = MagicMock()
-    mock.get = lambda k, default=None: d.get(k, default)
-    mock.__getitem__ = lambda self, k: d[k]
-    return mock
-
-
-def _make_event(tool_name: str, tool_params: dict = None):
-    event = MagicMock()
-    event.tool_use = _make_tool_use_dict(tool_name, tool_params)
-    event.cancel_tool = False
+def _make_event(tool_name, tool_params=None):
+    """テスト用 BeforeToolCallEvent を生成する。"""
+    from strands.hooks import BeforeToolCallEvent
+    event = MagicMock(spec=BeforeToolCallEvent)
+    event.tool_name = tool_name
+    event.tool_use = {"input": tool_params or {}}
+    event.cancel_tool = None
     return event
 
 
-class TestHumanApprovalHookInit:
-    def test_stores_tool_names(self):
-        hook = HumanApprovalHook(tool_names=["generate_transport_expense_form"])
-        assert hook._tool_names == ["generate_transport_expense_form"]
+class TestHumanApprovalHook:
+    def test_non_target_tool_skips(self):
+        """承認対象外ツールのときコールバックが呼び出されないこと"""
+        callback = MagicMock()
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("calculate_transport_fare")
+        hook._before_tool_call_handler(event)
+        callback.assert_not_called()
+        assert event.cancel_tool is None
 
-    def test_default_callback_none(self):
-        hook = HumanApprovalHook(tool_names=[])
-        assert hook._approval_callback is None
+    def test_ok_approval_continues_tool(self):
+        """'OK' 入力でツール実行が継続されること（cancel_tool が設定されないこと）"""
+        callback = MagicMock(return_value=(True, ""))
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("generate_transport_application")
+        with patch.object(hook, "_write_audit_log"):
+            hook._before_tool_call_handler(event)
+        assert event.cancel_tool is None
 
-    def test_custom_callback_stored(self):
-        cb = lambda name, params: (True, "")
-        hook = HumanApprovalHook(tool_names=[], approval_callback=cb)
-        assert hook._approval_callback is cb
+    def test_modify_sets_cancel_tool(self):
+        """'修正' 入力で event.cancel_tool がセットされること"""
+        callback = MagicMock(return_value=(False, "交通手段を変更してください"))
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("generate_transport_application")
+        hook._before_tool_call_handler(event)
+        assert "修正要求" in event.cancel_tool
+        assert "交通手段を変更してください" in event.cancel_tool
 
+    def test_cancel_sets_cancel_tool(self):
+        """'キャンセル' 入力で event.cancel_tool が 'キャンセル' に設定されること"""
+        callback = MagicMock(return_value=(False, "CANCEL"))
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("generate_expense_application")
+        with patch.object(hook, "_write_audit_log"):
+            hook._before_tool_call_handler(event)
+        assert event.cancel_tool == "キャンセル"
 
-class TestRegisterHooks:
-    def test_registers_before_tool_call(self):
-        hook = HumanApprovalHook(tool_names=[])
-        registry = MagicMock()
-        hook.register_hooks(registry)
-        registry.add_callback.assert_called_once()
+    def test_3_invalid_inputs_causes_cancel(self):
+        """認識不能入力が3回続いた場合にキャンセル扱いとなること"""
+        # 空文字列の detail を返し続ける（不正扱い）
+        callback = MagicMock(return_value=(False, ""))
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("generate_transport_application")
+        with patch.object(hook, "_write_audit_log"):
+            hook._before_tool_call_handler(event)
+        assert event.cancel_tool == "キャンセル"
+        assert callback.call_count == 3
 
-
-class TestOnBeforeToolCallPassthrough:
-    def test_non_target_tool_passes_through(self):
-        hook = HumanApprovalHook(tool_names=["generate_transport_expense_form"])
-        event = _make_event("calculate_transport_expense")
-        hook._on_before_tool_call(event)
-        assert event.cancel_tool is False
-
-
-class TestOnBeforeToolCallWithCallback:
-    def test_callback_approved(self):
-        cb = MagicMock(return_value=(True, ""))
-        hook = HumanApprovalHook(
-            tool_names=["generate_transport_expense_form"],
-            approval_callback=cb,
-        )
-        event = _make_event("generate_transport_expense_form")
-        hook._on_before_tool_call(event)
-        assert event.cancel_tool is False
-        cb.assert_called_once()
-
-    def test_callback_cancel(self):
-        cb = MagicMock(return_value=(False, "CANCEL"))
-        hook = HumanApprovalHook(
-            tool_names=["generate_transport_expense_form"],
-            approval_callback=cb,
-        )
-        event = _make_event("generate_transport_expense_form")
-        hook._on_before_tool_call(event)
-        assert event.cancel_tool == "申請をキャンセルしました。"
-
-    def test_callback_modification(self):
-        cb = MagicMock(return_value=(False, "日付を修正してください"))
-        hook = HumanApprovalHook(
-            tool_names=["generate_transport_expense_form"],
-            approval_callback=cb,
-        )
-        event = _make_event("generate_transport_expense_form")
-        hook._on_before_tool_call(event)
-        assert "修正要望" in event.cancel_tool
-        assert "日付を修正してください" in event.cancel_tool
-
-    def test_callback_exception_cancels_tool(self):
-        def bad_cb(name, params):
-            raise RuntimeError("callback error")
-
-        hook = HumanApprovalHook(
-            tool_names=["generate_transport_expense_form"],
-            approval_callback=bad_cb,
-        )
-        event = _make_event("generate_transport_expense_form")
-        hook._on_before_tool_call(event)
-        assert event.cancel_tool  # Should be set to an error message
-
-
-class TestLogApproval:
-    def test_log_approval_ok(self):
-        hook = HumanApprovalHook(tool_names=[])
-        with patch.object(hook._approval_logger, "info") as mock_log:
-            hook._log_approval("generate_transport_expense_form", "OK")
-            mock_log.assert_called_once()
-            logged = mock_log.call_args[0][0]
-            import json
-            record = json.loads(logged)
-            assert record["tool_name"] == "generate_transport_expense_form"
-            assert record["choice"] == "OK"
-            assert "timestamp" in record
-
-    def test_log_approval_failure_does_not_raise(self):
-        hook = HumanApprovalHook(tool_names=[])
-        with patch.object(hook._approval_logger, "info", side_effect=Exception("log error")):
-            hook._log_approval("tool", "OK")  # Should not raise
+    def test_expense_application_is_target(self):
+        """generate_expense_application も承認対象であること"""
+        callback = MagicMock(return_value=(True, ""))
+        hook = HumanApprovalHook(approval_callback=callback)
+        event = _make_event("generate_expense_application")
+        with patch.object(hook, "_write_audit_log"):
+            hook._before_tool_call_handler(event)
+        callback.assert_called_once()

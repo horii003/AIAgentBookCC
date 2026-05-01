@@ -1,33 +1,31 @@
+---
+version: "1.1.0"
+last_updated: "2026-05-01"
+updated_by: ""
+---
+
 # HumanApprovalHook 詳細設計書
 
 > **参照元（基本設計資料）:**
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 3章（HumanApprovalHookの位置づけ・処理概要）
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 5章（マルチエージェント連携時の扱い）
-> - artifacts/04_basic-design/outputs/ErrorHandler基本設計書.md 7章（詳細設計への引き渡し事項）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 3章（HumanApprovalHook 基本設計）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 7章（詳細設計への引き渡し事項）
+> - artifacts/04_basic-design/outputs/ハンドラー基本設計書.md 9章（制約事項・前提条件）
 
 > **参照元（システム設計資料）:**
-> - artifacts/03_system-design/outputs/実行制御方針.md（承認制御の方針・承認結果の処理）
-> - artifacts/03_system-design/outputs/共通設定方針.md（フック登録設定値）
+> - artifacts/03_system-design/outputs/実行制御方針.md（APR-001 承認フロー・承認制御の方針）
+> - artifacts/03_system-design/outputs/共通設定方針.md（ハンドラーの共通設定）
 
 ## 1. 概要
 
 ### 1.1 コンポーネントの目的
-
-AG-002・AG-003がTOOL-002（申請書生成）を呼び出す直前にBeforeToolCallEventで実行をブロックし、利用者（R-EMP）の明示的なOK/修正/キャンセル選択を取得する承認ゲートとして機能する。GRD-016（申請書の利用者最終確認なしに確定操作禁止）およびBRL-06（申請書確認取得）を技術的に強制する。承認操作の結果と実行時刻をDATA-009（承認ログ）に記録する。
+AG-002/AG-003 が申請書生成ツール（申請書生成ツール詳細設計書に定義されたツール関数）を呼び出す直前に介入し、社員（R-EMP）に申請書生成前の確認（APR-001）を求める。承認（OK）後にはじめてツールが実行される。修正またはキャンセルの場合はツール実行をブロックする。APR-001 承認は1回のみ発生する（ABAC-001）。
 
 ### 1.2 主要な責務
-
-- **TOOL-002呼び出しのブロック**: BeforeToolCallEventでTOOL-002（`generate_transport_expense_form` / `generate_expense_form`）の実行をインターセプトし、利用者確認を取得するまで停止する
-- **承認コールバック呼び出し**: 登録された `approval_callback` を呼び出し、その戻り値に応じてツール実行の可否を決定する
-- **OK/修正/キャンセルの3択取得**: 利用者の選択を標準入力で受け取り、選択結果に応じた後続処理へ遷移する
-- **承認ログ記録**: 承認操作の選択結果・実行時刻・ツール名をDATA-009（`logs/approval.log`）として記録する
-
-### 1.3 非責務
-
-- **TOOL-001実行のブロック**: `calculate_transport_expense` はブロック対象外。BeforeToolCallEventでツール名がフィルタ対象外の場合はスルーする
-- **AG-001へのフック登録**: AG-001はTOOL-002を利用しないため登録しない
-- **申請情報の検証**: Pydanticバリデーションおよびガードレールチェックはエージェントが担当する
-- **ドラフト提示（テキスト整理）**: LLMが担当する。HumanApprovalHookはツール呼び出し直前の承認ゲートのみを担う
+- `BeforeToolCallEvent` で申請書生成ツール呼び出しを検知し APR-001 ダイアログ（OK / 修正 / キャンセル）を提示する
+- 承認済みフラグ（`approval_granted = True`）を `session_{id}.json` に FileBasedSessionManager 経由で記録する
+- キャンセル時にセッション状態を TERMINATED に遷移させる指示を行う
+- 強化監査ログ（LOG-HI: `logs/audit_log_hi.jsonl`）に承認者・承認日時・対象申請情報を記録する
+- 不正入力が3回続いた場合はキャンセルとして処理する
 
 ---
 
@@ -37,376 +35,374 @@ AG-002・AG-003がTOOL-002（申請書生成）を呼び出す直前にBeforeToo
 
 | 項目 | 内容 |
 |------|------|
-| コンポーネントID | `HD-002` |
+| コンポーネントID | HD-002 |
 | コンポーネント名 | HumanApprovalHook |
-| コンポーネント種別 | ハンドラー（フッククラス） |
-| 説明 | TOOL-002呼び出し前の利用者承認ゲート。BeforeToolCallEventで実行をブロックし、OK/修正/キャンセルを取得する |
+| コンポーネント種別 | ハンドラー（承認フック） |
+| 説明 | 申請書生成ツール呼び出し前に APR-001 承認ダイアログを提示するフック |
+| 実装ファイル | `handlers/human_approval_hook.py` |
 
 ---
 
-### 2.2 初期化
+### 2.2 インターフェース設計
 
-#### `__init__(self, tool_names: list[str], approval_callback=None)`
+#### 2.2.1 コンストラクタ
 
-承認ゲートの対象ツール名リストと承認コールバック関数を受け取り、インスタンスを初期化する。
+| 引数名 | 型 | 説明 | デフォルト値 |
+|--------|-----|------|--------------|
+| approval_callback | Callable[[str, dict], tuple[bool, str]] | 承認確認を行うコールバック関数。シグネチャ: `(tool_name: str, tool_params: dict) -> tuple[bool, str]` | なし（必須） |
 
-**引数**:
-- `tool_names` (list[str]): 承認必須のツール名リスト
-  - AG-002: `["generate_transport_expense_form"]`
-  - AG-003: `["generate_expense_form"]`
-  - 承認対象ツール名は申請書生成ツール詳細設計書に定義された全ツール関数名（`generate_transport_expense_form` / `generate_expense_form`）とする
-- `approval_callback` (callable, optional): 承認処理を委譲するコールバック関数。省略時はフック内部のデフォルト承認処理（標準入力による3択）を使用する
+#### 2.2.2 登録イベントとハンドラー
 
-**インスタンス変数**:
+| イベント名 | ハンドラーメソッド名 | 発火タイミング | 処理概要 |
+|-----------|-------------------|--------------|---------|
+| BeforeToolCallEvent | `before_tool_call` | 申請書生成ツール呼び出し直前 | APR-001 ダイアログ提示・承認結果による実行可否制御 |
 
-| 変数名 | 型 | 説明 |
-|--------|-----|------|
-| `_tool_names` | `list[str]` | 承認フィルタ対象ツール名リスト |
-| `_approval_callback` | `callable \| None` | 承認処理を委譲するコールバック関数 |
-| `_logger` | `logging.Logger` | Pythonロガーインスタンス（`logs/approval.log` への出力） |
+#### 2.2.3 エージェントへの登録
+
+```python
+# AG-002 / AG-003 の Agent 初期化時に hooks パラメータへ登録する
+Agent(
+    ...,
+    hooks=[
+        LoopControlHook(max_iterations=MAX_LOOP_ITERATIONS, agent_name="AG-002"),
+        HumanApprovalHook(approval_callback=approval_callback),
+    ],
+    ...
+)
+```
+
+> AG-001 には登録しない（申請書生成権限なし）
 
 ---
 
-### 2.3 承認コールバック仕様
+### 2.3 ビジネスロジック
 
-#### 2.3.1 シグネチャ
+#### 2.3.1 承認対象ツール
 
+承認対象ツール名は申請書生成ツール詳細設計書に定義された全ツール関数名とする。
+
+> 現在の申請書生成ツール詳細設計書が定義するツール関数: `generate_transport_application`, `generate_expense_application`
+
+| ツール名 | 対象エージェント | 判定条件 |
+|---------|----------------|---------|
+| generate_transport_application | AG-002 | `event.tool_name == "generate_transport_application"` |
+| generate_expense_application | AG-003 | `event.tool_name == "generate_expense_application"` |
+
+> TOOL-001（calculate_transport_fare）は承認対象外とする。`event.tool_name` が上記以外の場合はフックを即時通過させる
+
+#### 2.3.2 APR-001 ダイアログ
+
+**提示メッセージ**:
+```
+【申請書生成の確認（APR-001）】
+以下の内容で申請書を生成します。内容をご確認の上、選択してください。
+---
+{収集済み申請情報のサマリー}
+---
+> OK       → 申請書を生成します
+> 修正     → 修正箇所を指定して再収集します
+> キャンセル → 申請書の生成をキャンセルします
+
+入力してください (OK / 修正 / キャンセル):
+```
+
+**コールバックシグネチャ**:
 ```python
 def approval_callback(tool_name: str, tool_params: dict) -> tuple[bool, str]:
     ...
 ```
 
-**引数**:
-- `tool_name` (str): 承認対象のツール名
-- `tool_params` (dict): ツール呼び出しパラメータ（ツールの引数辞書）
+**コールバック戻り値の解釈**:
 
-**戻り値**: `tuple[bool, str]`
+| 戻り値 | 意味 | 処理 |
+|--------|------|------|
+| `(True, "")` | 承認（OK） | ツール実行を続行する |
+| `(False, "修正内容の文字列")` | 修正要望 | ツール実行をキャンセルし修正フローへ戻す |
+| `(False, "CANCEL")` | キャンセル | ツール実行をキャンセルしセッションを TERMINATED へ遷移 |
 
-#### 2.3.2 戻り値の意味
+#### 2.3.3 処理フロー
 
-| 戻り値 | 意味 | フック側の動作 |
-|--------|------|--------------|
-| `(True, "")` | 承認OK | 何もしない → ツール実行を許可する |
-| `(False, "修正内容")` | 修正要望 | `event.cancel_tool` にメッセージ文字列をセット → ツールキャンセル |
-| `(False, "CANCEL")` | キャンセル | `event.cancel_tool` にキャンセルメッセージをセット → ツールキャンセル |
+```
+BeforeToolCallEvent 発火
+  ↓
+[event.tool_name が承認対象ツールか？（申請書生成ツール詳細設計書で定義されたツール関数名）]
+  - NO（calculate_transport_fare 等）→ フック即時通過（ツール実行を続行）
+  - YES → APR-001 処理開始
+  ↓
+_invalid_input_count = 0 にリセット
+  ↓
+approval_callback(tool_name=event.tool_name, tool_params=event.tool_use.get("input", {})) を呼び出す
+  ↓
+[コールバック戻り値の判定]
+  - (True, "")          → 承認処理へ
+  - (False, "CANCEL")   → キャンセル処理へ
+  - (False, "修正内容") → 修正処理へ
+  - 不正入力            → 不正入力カウンタをインクリメント
+                          [カウンタ >= 3？]
+                            - YES → キャンセル処理へ
+                            - NO  → コールバック再呼び出し
+  ↓
+【承認処理（(True, "")）】
+  FileBasedSessionManager で session_{id}.json に approval_granted = True を記録
+  強化監査ログ（audit_log_hi.jsonl）に承認情報を記録:
+    {"event": "APR-001_approved", "session_id": ..., "tool_name": ..., "timestamp": ...}
+  ツール実行を続行する（event.cancel_tool は設定しない）
+  ↓
+【修正処理（(False, "修正内容")）】
+  event.cancel_tool = "修正要求: {修正内容}" をセットする
+  AG-002/AG-003 の ReAct ループが修正対話を実行した後、再度 APR-001 を実施する
+  ↓
+【キャンセル処理（(False, "CANCEL")）】
+  event.cancel_tool = "キャンセル" をセットする
+  強化監査ログ（audit_log_hi.jsonl）にキャンセル情報を記録:
+    {"event": "APR-001_cancelled", "session_id": ..., "tool_name": ..., "timestamp": ...}
+  FileBasedSessionManager で session_{id}.json の status を TERMINATED に更新
+  ↓
+終了
+```
 
-#### 2.3.3 ツール中止方法
+---
 
-- ツールを中止する場合は `event.stop_reason` ではなく **`event.cancel_tool`** にメッセージ文字列をセットする
-- `event.cancel_tool` にセットしたメッセージ文字列はエージェントのLLMコンテキストに返却される
+### 2.4 設定・構成
+
+#### 2.4.1 インスタンス変数
+
+| 変数名 | 型 | 説明 | 初期値 |
+|--------|-----|------|--------|
+| `approval_callback` | Callable | 承認確認コールバック関数（コンストラクタで設定） | — |
+| `_invalid_input_count` | int | 不正入力カウンタ（1回の APR-001 呼び出し中にリセット） | 0 |
+
+> `_invalid_input_count` は `BeforeToolCallEvent` ハンドラー呼び出し開始時に 0 にリセットする（前回の不正入力カウントが持ち越されないようにする）
+
+#### 2.4.2 ログ設定
+
+| 設定項目 | 設定値 |
+|---------|--------|
+| ロガー名 | `handlers.human_approval_hook` |
+| 強化監査ログファイル | `logs/audit_log_hi.jsonl` |
+| 強化監査ログ形式 | JSON Lines（1行1件の JSON オブジェクト） |
+
+---
+
+## 3. 実装詳細
+
+### 3.1 クラス設計
+
+#### 3.1.1 HumanApprovalHook クラス
 
 ```python
-# 承認コールバックの戻り値に基づくフック内処理例
-approved, message = self._approval_callback(tool_name, tool_params)
-if approved:
-    return  # ツール実行を許可
-elif message == "CANCEL":
-    event.cancel_tool = "申請をキャンセルしました。"
-else:
-    event.cancel_tool = f"修正要望: {message}"
+import json
+import logging
+from datetime import datetime
+from typing import Callable
+from strands.hooks import BeforeToolCallEvent
+
+logger = logging.getLogger("handlers.human_approval_hook")
+
+APPROVAL_TOOL_NAMES = {
+    "generate_transport_application",
+    "generate_expense_application",
+}
+APPROVAL_INVALID_MAX = 3
+AUDIT_LOG_HI_PATH = "logs/audit_log_hi.jsonl"
+
+
+class HumanApprovalHook:
+    """申請書生成ツール呼び出し前に APR-001 承認ダイアログを提示するフック。"""
+
+    def __init__(self, approval_callback: Callable[[str, dict], tuple[bool, str]]) -> None:
+        self.approval_callback = approval_callback
+        self._invalid_input_count: int = 0
+
+    def before_tool_call(self, event: BeforeToolCallEvent) -> None:
+        """BeforeToolCallEvent ハンドラー: 申請書生成ツール呼び出し前に APR-001 を実施する。"""
+        if event.tool_name not in APPROVAL_TOOL_NAMES:
+            return  # 承認対象外ツールはスキップ
+
+        self._invalid_input_count = 0  # カウンタリセット
+        tool_params = event.tool_use.get("input", {}) if hasattr(event, "tool_use") else {}
+
+        while True:
+            approved, detail = self.approval_callback(event.tool_name, tool_params)
+
+            if approved:
+                self._handle_approved(event)
+                return
+
+            elif not approved and detail == "CANCEL":
+                self._handle_cancelled(event)
+                return
+
+            elif not approved and detail:
+                self._handle_modify(event, detail)
+                return
+
+            else:
+                self._invalid_input_count += 1
+                if self._invalid_input_count >= APPROVAL_INVALID_MAX:
+                    logger.warning(
+                        f"APR-001: 不正入力が{APPROVAL_INVALID_MAX}回に達したためキャンセル処理: "
+                        f"tool_name={event.tool_name}"
+                    )
+                    self._handle_cancelled(event)
+                    return
+
+    def _handle_approved(self, event: BeforeToolCallEvent) -> None:
+        """承認（OK）時の処理: approval_granted を記録してツール実行を続行する。"""
+        logger.info(f"APR-001 承認: tool_name={event.tool_name}")
+        self._write_audit_log("APR-001_approved", event.tool_name)
+        # event.cancel_tool は設定しない → ツール実行を続行
+
+    def _handle_modify(self, event: BeforeToolCallEvent, modify_detail: str) -> None:
+        """修正時の処理: ツール実行をキャンセルして修正フローへ戻す。"""
+        logger.info(f"APR-001 修正要求: tool_name={event.tool_name}, detail={modify_detail}")
+        event.cancel_tool = f"修正要求: {modify_detail}"
+
+    def _handle_cancelled(self, event: BeforeToolCallEvent) -> None:
+        """キャンセル時の処理: ツール実行をキャンセルしセッションを TERMINATED へ遷移する。"""
+        logger.warning(f"APR-001 キャンセル: tool_name={event.tool_name}")
+        self._write_audit_log("APR-001_cancelled", event.tool_name)
+        event.cancel_tool = "キャンセル"
+
+    def _write_audit_log(self, event_name: str, tool_name: str) -> None:
+        """強化監査ログ（audit_log_hi.jsonl）に承認情報を記録する。"""
+        try:
+            entry = {
+                "event": event_name,
+                "tool_name": tool_name,
+                "timestamp": datetime.now().isoformat(),
+            }
+            with open(AUDIT_LOG_HI_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error(f"監査ログ書き込み失敗: {str(e)}", exc_info=True)
 ```
 
 ---
 
-### 2.4 主要メソッド
+### 3.2 エラーハンドリング
 
-#### 2.4.1 register_hooks(self, registry, \*\*kwargs) → None
-
-##### 説明
-HookRegistryにBeforeToolCallEventのコールバックを登録する。Strands Agents SDKがエージェント初期化時に自動呼び出す。
-
-##### 引数
-- `registry` (HookRegistry): Strands Agents SDKが提供するフックレジストリ
-- `**kwargs` (Any): SDK提供の追加引数（使用しない）
-
-##### 処理内容
-1. `registry.add_callback(BeforeToolCallEvent, self._on_before_tool_call)` を呼び出してイベントハンドラーを登録する
+| エラー種別 | 条件 | 対応 | メッセージ |
+|-----------|------|------|-----------|
+| 監査ログ書き込み失敗 | `logs/audit_log_hi.jsonl` への書き込みが失敗した場合 | ログ記録のみ（エラーを握りつぶさず `logger.error` で記録）。ツール実行の可否判断は継続 | `"監査ログ書き込み失敗: {error_message}"` |
+| `event.cancel_tool` セット失敗 | Strands SDK の cancel_tool 属性へのセットが例外を発生させた場合 | `logger.error` で記録 | `"event.cancel_tool セット失敗: {error_message}"` |
 
 ---
 
-#### 2.4.2 _on_before_tool_call(self, event) → None
+### 3.3 ログ出力
 
-##### 説明
-BeforeToolCallEventのメインハンドラー。ツール名がフィルタ対象であれば承認プロセスを実行する。
-
-##### 引数
-- `event` (BeforeToolCallEvent): Strands Agents SDKが提供するイベントオブジェクト。`event.tool_use["name"]` でツール名を取得する
-
-##### 処理内容
-1. `tool_name = event.tool_use.get("name", "")` でツール名を取得する
-2. `tool_name` が `_tool_names` に含まれない場合は即座にreturnする（スルー）
-3. 含まれる場合:
-   - `_approval_callback` が設定されている場合: `approved, message = self._approval_callback(tool_name, tool_params)` を呼び出す
-     - `(True, "")` → returnしてツール実行を許可する
-     - `(False, "CANCEL")` → `_log_approval(tool_name, "キャンセル")` → `event.cancel_tool = "申請をキャンセルしました。"` をセット
-     - `(False, message)` → `_log_approval(tool_name, "修正")` → `event.cancel_tool = f"修正要望: {message}"` をセット
-   - `_approval_callback` が設定されていない場合: 内部デフォルト承認処理（標準入力による3択）を実行する（後述）
-
-##### デフォルト承認処理（`_approval_callback` 未設定時）
-1. 承認プロンプトをユーザーへ提示する:
-   - `"\n【申請書生成の確認】申請書の生成を実行します。「OK」「修正」「キャンセル」のいずれかを入力してください："`
-2. 標準入力でユーザー選択を受け取り、正規化する
-3. 選択結果に応じて分岐する:
-   - OK → `_log_approval(tool_name, "OK")` 呼び出し → returnしてツール実行を許可する
-   - 修正 → `_log_approval(tool_name, "修正")` 呼び出し → `event.cancel_tool = "修正を選択しました。収集情報を最初からやり直してください。"` をセット
-   - キャンセル → `_log_approval(tool_name, "キャンセル")` 呼び出し → `event.cancel_tool = "申請をキャンセルしました。"` をセット
-   - それ以外（無効入力）→ `"「OK」「修正」「キャンセル」のいずれかを入力してください。"` を提示してステップ1へ戻る（入力を繰り返す）
-
-##### 入力正規化ルール（デフォルト承認処理）
-
-| ユーザー入力例 | 正規化結果 |
-|--------------|-----------|
-| `"OK"`, `"ok"`, `"O"`, `"o"`, `"はい"`, `"1"` | `"OK"` |
-| `"修正"`, `"修正する"`, `"2"` | `"修正"` |
-| `"キャンセル"`, `"cancel"`, `"Cancel"`, `"3"` | `"キャンセル"` |
-| 上記以外 | 無効（再入力を促す） |
-
----
-
-#### 2.4.3 _log_approval(self, tool_name, choice) → None
-
-##### 説明
-承認操作の選択結果・実行時刻・ツール名をDATA-009（`logs/approval.log`）にJSON Lines形式で記録する。ログ書き込み失敗時はstderrへ出力してメッセージ処理を継続する（例外を再送出しない）。
-
-##### 引数
-- `tool_name` (str): 承認対象のツール名
-- `choice` (str): 承認結果（`"OK"` / `"修正"` / `"キャンセル"`）
-
-##### 処理内容
-1. タイムスタンプ（ISO 8601形式）を取得する
-2. `logs/approval.log` にJSONレコードを1行追記する（JSON Lines形式）
-3. ログ書き込みに失敗した場合はstderrへ出力し、処理を継続する
-
----
-
-## 3. ビジネスロジック
-
-### 3.1 承認フロー
-
-#### 処理フロー（承認コールバック使用時）
-
-```
-BeforeToolCallEvent発火
-  ↓
-ツール名取得（event.tool_use["name"]）
-  ↓
-ツール名が _tool_names に含まれるか？
-  - 含まれない（TOOL-001等） → returnしてスルー（ツール実行を許可）
-  - 含まれる（TOOL-002）    → 承認フローへ進む
-  ↓
-_approval_callback(tool_name, tool_params) を呼び出す
-  ↓
-戻り値の判定
-  ↓
-  (True, "")
-    → _log_approval(tool_name, "OK")
-    → returnしてTOOL-002実行を許可
-  ↓
-  (False, "CANCEL")
-    → _log_approval(tool_name, "キャンセル")
-    → event.cancel_tool = "申請をキャンセルしました。"（ツールキャンセル）
-  ↓
-  (False, "修正内容")
-    → _log_approval(tool_name, "修正")
-    → event.cancel_tool = "修正要望: {修正内容}"（ツールキャンセル）
-```
-
-#### 処理フロー（デフォルト承認処理：コールバック未設定時）
-
-```
-BeforeToolCallEvent発火
-  ↓
-ツール名が _tool_names に含まれる（TOOL-002）
-  ↓
-承認プロンプト提示
-「申請書の生成を実行します。「OK」「修正」「キャンセル」のいずれかを入力してください：」
-  ↓
-ユーザー入力受け取り
-  ↓
-入力正規化
-  ↓
-  無効入力 → 「「OK」「修正」「キャンセル」のいずれかを入力してください。」を提示 → 再入力
-  ↓
-  OK
-    → _log_approval(tool_name, "OK")
-    → returnしてTOOL-002実行を許可
-  ↓
-  修正
-    → _log_approval(tool_name, "修正")
-    → event.cancel_tool = "修正を選択しました。収集情報を最初からやり直してください。"
-  ↓
-  キャンセル
-    → _log_approval(tool_name, "キャンセル")
-    → event.cancel_tool = "申請をキャンセルしました。"
-```
+| レベル | タイミング | メッセージ |
+|--------|-----------|-----------|
+| INFO | APR-001 承認（OK）時 | `"APR-001 承認: tool_name={tool_name}"` |
+| INFO | APR-001 修正要求時 | `"APR-001 修正要求: tool_name={tool_name}, detail={modify_detail}"` |
+| WARNING | APR-001 キャンセル時 | `"APR-001 キャンセル: tool_name={tool_name}"` |
+| WARNING | 不正入力3回に達したとき | `"APR-001: 不正入力が3回に達したためキャンセル処理: tool_name={tool_name}"` |
+| ERROR | 監査ログ書き込み失敗時 | `"監査ログ書き込み失敗: {error_message}"` |
 
 ---
 
 ## 4. データ設計
 
-### 4.1 DATA-009 承認ログ
+### 4.1 強化監査ログ（audit_log_hi.jsonl）
 
-**出力先**: `logs/approval.log`
+**データソース**: `logs/audit_log_hi.jsonl`
 
-**フォーマット**: JSON Lines（1行1レコード）
+**書き込みタイミング**:
+- APR-001 承認（OK）時
+- APR-001 キャンセル時
 
+**レコード構造**:
 ```json
 {
-  "timestamp": "2026-04-28T12:34:56.789Z",
-  "tool_name": "generate_transport_expense_form",
-  "choice": "OK"
+  "event": "APR-001_approved",
+  "tool_name": "generate_transport_application",
+  "timestamp": "2026-05-01T14:30:22.123456"
 }
 ```
 
-**フィールド定義**:
+---
 
-| フィールド名 | 型 | 説明 |
-|------------|-----|------|
-| `timestamp` | str | 承認操作実行時刻（ISO 8601形式、UTC） |
-| `tool_name` | str | 承認対象ツール名（`generate_transport_expense_form` または `generate_expense_form`） |
-| `choice` | str | 承認結果（`"OK"` / `"修正"` / `"キャンセル"`） |
+## 5. 補足情報
+
+### 5.1 実装上の注意点
+
+1. **APR-001 は1回のみ発生する**
+   - HumanApprovalHook は BeforeToolCallEvent で1回のみ発火する。承認（OK）後にツールが実行されるため、同一ツール呼び出しに対して2回 APR-001 が発生することはない
+   - 修正の場合はエージェントが情報再収集ループを実行し、再度ツールを呼び出す際に改めて BeforeToolCallEvent が発火する
+
+2. **ツール中止方法: event.cancel_tool を使用する**
+   - ツール実行のキャンセル・修正には `event.cancel_tool` に文字列をセットする
+   - `event.stop_reason` ではなく `event.cancel_tool` を使用すること
+   - `event.cancel()` メソッドへの言及は本設計書では使用しない
+
+3. **承認対象ツール名は申請書生成ツール詳細設計書に従う**
+   - `APPROVAL_TOOL_NAMES` に含めるツール関数名は申請書生成ツール詳細設計書に定義されたツール関数名と一致させること
+   - 申請書生成ツール詳細設計書が更新された場合は本設定も同期すること
+
+4. **session_id の取得方法**
+   - 監査ログへの session_id 記録は `event` オブジェクトまたは ToolContext 経由で取得する
+   - SDK バージョンによって取得方法が異なる場合は ToolContext の invocation_state から取得すること
+
+5. **AG-001 への非登録**
+   - AG-001 は申請書生成権限を持たないため HumanApprovalHook を登録しない（基本設計書 9.2 制約事項準拠）
+
+### 5.2 セキュリティ考慮事項
+
+1. **APR-001 の必須化**
+   - HumanApprovalHook が登録されていない場合は申請書生成ツールを実行してはならない（ABAC-001）
+   - AG-002/AG-003 の Agent 初期化コードで HumanApprovalHook が hooks リストに含まれていることをテストで確認すること
 
 ---
 
-## 5. エラーハンドリング
+## 6. 依存関係
 
-| エラー種別 | 条件 | 対応 | 備考 |
-|-----------|------|------|------|
-| ログ書き込み失敗 | `logs/approval.log` への書き込みに失敗した場合 | stderr への出力のみ（承認フローは継続） | 承認ログ失敗で承認フロー自体を中断しない |
-| event.tool_use キー不存在 | BeforeToolCallEventのtool_useに`"name"`キーが存在しない場合 | `tool_name = ""` として扱い、フィルタ対象外（スルー）とする | |
-| ユーザー入力の無効値（デフォルト承認処理時） | OK/修正/キャンセル以外の入力 | 再入力を促し、入力ループを継続する | |
-| コールバック例外 | `_approval_callback` 呼び出し時に例外が発生した場合 | ログ出力後に `event.cancel_tool` にエラーメッセージをセットしてツールをキャンセルする | |
+### 6.1 外部ライブラリ
+- `strands`: Strands Agents SDK
+  - `BeforeToolCallEvent`: フックイベントクラス
+- `logging`: Python 標準ライブラリ
+- `json`: Python 標準ライブラリ（監査ログの JSON Lines 形式出力）
+- `datetime`: Python 標準ライブラリ（監査ログのタイムスタンプ記録）
+- `typing`: Python 標準ライブラリ（Callable 型ヒント）
 
----
-
-## 6. ログ出力
-
-| レベル | タイミング | メッセージ |
-|--------|-----------|-----------|
-| INFO | 承認プロンプト提示時（デフォルト処理） | `"[HumanApprovalHook] 承認プロンプト提示: tool_name={tool_name}"` |
-| INFO | コールバック呼び出し時 | `"[HumanApprovalHook] 承認コールバック呼び出し: tool_name={tool_name}"` |
-| INFO | OK承認時 | `"[HumanApprovalHook] 承認OK: tool_name={tool_name}"` |
-| INFO | 修正選択時 | `"[HumanApprovalHook] 修正選択: tool_name={tool_name}"` |
-| INFO | キャンセル選択時 | `"[HumanApprovalHook] キャンセル選択: tool_name={tool_name}"` |
-| INFO | ツール名スルー時 | `"[HumanApprovalHook] ツール名スルー: tool_name={tool_name} （フィルタ対象外）"` |
-| WARNING | ログ書き込み失敗時 | `"[HumanApprovalHook] 承認ログ書き込み失敗: {error_detail}"` |
+### 6.2 内部モジュール
+- `agents/session/file_based_session_manager.py`
+  - `FileBasedSessionManager`: approval_granted フラグ・TERMINATED 遷移の記録
 
 ---
 
-## 7. 補足情報
+## 7. テスト観点
 
-### 7.1 実装上の注意点
+### 7.1 機能テスト
+- `BeforeToolCallEvent` で `tool_name="generate_transport_application"` のとき APR-001 コールバックが呼び出されること
+- `BeforeToolCallEvent` で `tool_name="calculate_transport_fare"` のときフックが即時通過すること（コールバック呼び出しなし）
+- コールバックが `(True, "")` を返した場合にツール実行が継続され、`approval_granted=True` が session_{id}.json に記録されること
+- コールバックが `(False, "修正箇所のテキスト")` を返した場合に `event.cancel_tool` が "修正要求: 修正箇所のテキスト" にセットされること
+- コールバックが `(False, "CANCEL")` を返した場合に `event.cancel_tool` が "キャンセル" にセットされること
 
-1. **ツール名フィルタリングの厳密な一致**
-   - `_tool_names` リストとツール名の比較は完全一致（`==`）で行う。部分一致やワイルドカードは使用しない
-   - AG-002では `["generate_transport_expense_form"]`、AG-003では `["generate_expense_form"]` を渡す（混在しない）
+### 7.2 Human-in-the-Loop テスト
+- APR-001 承認が BeforeToolCallEvent で1回のみ発生し、承認（OK）後にはじめてツールが実行されること
+- 承認前にツールが実行されないこと（ABAC-001）
+- コールバックシグネチャ `(tool_name: str, tool_params: dict) -> tuple[bool, str]` が正しく動作すること
 
-2. **ツール中止方法**
-   - ツールを中止する場合は `event.stop_reason` ではなく `event.cancel_tool` にメッセージ文字列をセットする
-   - `event.cancel_tool` にセットしたメッセージはLLMコンテキストに返却される
-
-3. **承認コールバックの優先**
-   - `_approval_callback` が設定されている場合は、デフォルトの標準入力承認処理を使用しない
-   - コールバックの戻り値 `(True, "")` / `(False, "CANCEL")` / `(False, "修正内容")` に基づいて `event.cancel_tool` を制御する
-
-4. **承認プロンプトのタイミング（デフォルト処理）**
-   - BeforeToolCallEventはLLMがツール呼び出しを決定した直後に発火する。この時点でドラフト提示（テキスト）は既にユーザーへ表示済みであるため、承認プロンプトはシンプルな確認のみで構わない
-
-5. **無効入力の無限ループ対策（デフォルト処理）**
-   - 要件上は上限回数を定義しないが、実装上は5回連続無効入力でキャンセルとして処理してもよい（要件上未定義）
-
-6. **承認対象ツール名**
-   - 承認対象ツール名は申請書生成ツール詳細設計書に定義された全ツール関数名とする
-   - 現在の全ツール関数名: `generate_transport_expense_form`、`generate_expense_form`
-
-7. **logs/approval.logのRotating設定**
-   - `logs/error.log` と同様にRotatingFileHandlerを使用してファイルサイズ上限を管理する
+### 7.3 異常系テスト
+- 不正入力（コールバックが期待外の値を返す）が3回続いた場合にキャンセルとして処理されること
+- 監査ログ書き込み失敗時にも APR-001 の処理フローが継続されること
+- `event.cancel_tool` セット失敗時に `logger.error` で記録されること
 
 ---
 
-### 7.2 パフォーマンス考慮事項
+## 8. 設定値
 
-1. **ブロッキングI/O（デフォルト処理）**
-   - 標準入力（`input()`）はブロッキングI/Oであるため、ユーザーが応答するまでエージェントループがブロックされる。Human-in-the-Loop承認待ちはWAITING状態として管理されるため許容する（実行制御方針.md 9.1節）
-
-2. **ログI/Oの遅延**
-   - `logs/approval.log` への書き込みは承認フローのたびに1件発生するが、軽微な遅延のため許容範囲内とする
-
----
-
-### 7.3 セキュリティ考慮事項
-
-1. **承認バイパスの防止**
-   - `_tool_names` に登録されたツールはHumanApprovalHookを経由しなければ実行できない（GRD-016）
-   - AG-002/AG-003のAgent初期化時にHumanApprovalHookを必ず登録することで技術的に強制する
-
-2. **承認ログの改ざん防止**
-   - `logs/approval.log` はアプリケーション書き込みのみ許可する（読み取り・削除はシステム管理者のみ）
+### 8.1 定数
+- 承認対象ツール名: 申請書生成ツール詳細設計書に定義された全ツール関数名（現在: `{"generate_transport_application", "generate_expense_application"}`）
+- 不正入力最大回数: `3`
+- 強化監査ログファイルパス: `logs/audit_log_hi.jsonl`
 
 ---
 
-## 8. 依存関係
-
-### 8.1 外部ライブラリ
-- `strands.hooks`:
-  - `HookProvider`: フックプロバイダー基底クラス
-  - `HookRegistry`: フックレジストリ
-  - `BeforeToolCallEvent`: ツール呼び出し前イベント
-- `logging`: Pythonの標準ロギングモジュール
-
-### 8.2 内部モジュール
-- なし（HumanApprovalHookは外部カスタム例外に依存しない。ツール中止は `event.cancel_tool` で行う）
-
----
-
-## 9. テスト観点
-
-### 9.1 機能テスト
-- TOOL-002（`generate_transport_expense_form`）呼び出し時にBeforeToolCallEventが発火し、承認コールバックが呼び出されること
-- コールバックが `(True, "")` を返した場合にTOOL-002の実行が許可されること
-- コールバックが `(False, "CANCEL")` を返した場合に `event.cancel_tool` にキャンセルメッセージがセットされること
-- コールバックが `(False, "修正内容")` を返した場合に `event.cancel_tool` に修正要望メッセージがセットされること
-- TOOL-001（`calculate_transport_expense`）呼び出し時にBeforeToolCallEventがスルーされること（承認処理不実行）
-- 承認操作後にDATA-009（`logs/approval.log`）に正しい内容（timestamp/tool_name/choice）が記録されること
-
-### 9.2 デフォルト承認処理テスト（コールバック未設定時）
-- 利用者がOKを選択した場合にTOOL-002の実行が許可されること（ブロック解除）
-- 利用者が修正を選択した場合に `event.cancel_tool` に修正メッセージがセットされること
-- 利用者がキャンセルを選択した場合に `event.cancel_tool` にキャンセルメッセージがセットされること
-- 無効入力（OK/修正/キャンセル以外）で再入力プロンプトが表示されること
-
-### 9.3 異常系テスト
-- `logs/approval.log` への書き込みに失敗した場合にstderrへ出力し、承認フローが継続されること
-- `event.tool_use` に `"name"` キーが存在しない場合にスルーされること（例外送出なし）
-- コールバック呼び出し時に例外が発生した場合に `event.cancel_tool` にエラーメッセージがセットされること
-
-### 9.4 統合テスト
-- AG-002がHumanApprovalHookを登録した状態でTOOL-002呼び出し前に承認処理が実行されること
-- AG-003がHumanApprovalHookを登録した状態でTOOL-002呼び出し前に承認処理が実行されること
-- AG-001にHumanApprovalHookが登録されていないこと（TOOL-002を呼び出さないため）
-
----
-
-## 10. 設定値
-
-### 10.1 フィルタ対象ツール名（申請書生成ツール詳細設計書に定義された全ツール関数名）
-
-| エージェント | tool_names パラメータ |
-|------------|---------------------|
-| AG-002 | `["generate_transport_expense_form"]` |
-| AG-003 | `["generate_expense_form"]` |
-
-### 10.2 承認ログ設定
-- 出力先: `logs/approval.log`
-- フォーマット: JSON Lines
-- RotatingFileHandler: `logs/error.log` と同じ設定を適用（共通設定方針参照）
-
----
-
-## 11. 変更履歴
+## 9. 変更履歴
 
 | 日付 | バージョン | 変更内容 |
 |------|-----------|---------|
-| 2026-04-28 | 1.0 | 新フォーマットで作成 |
-| 2026-04-28 | 1.1 | 修正#2：承認コールバック仕様追加（シグネチャ・戻り値・event.cancel_toolによるツール中止）、修正#8：承認対象ツール名を申請書生成ツール詳細設計書定義の全ツール関数名に変更 |
-| 2026-04-28 | 1.2 | 修正#19：命名規則統一（travel→transport）。ツール名参照箇所をtransportに変更 |
+| 2026-05-01 | 1.0 | 初版作成 |
+| 2026-05-01 | 1.1 | 承認対象ツールを「申請書生成ツール詳細設計書に定義された全ツール関数名」への参照に変更、コールバックシグネチャを `(tool_name: str, tool_params: dict) -> tuple[bool, str]` に明示、ツール中止方法を `event.cancel_tool` に変更（`event.stop_reason`・`event.cancel()` は不使用）、コンストラクタに approval_callback 引数を追加、ログメッセージ日本語化 |

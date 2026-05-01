@@ -1,51 +1,89 @@
-"""エラーハンドラー
+"""エラーハンドリング関連のモジュール
 
-全エージェント・ツールで発生した例外を受け取り、ユーザー向けメッセージ文字列を生成して返す。
-ログ出力・セッション状態更新は呼び出し元モジュールが責務を持ち、ErrorHandler 自身は行わない。
+例外からユーザー向けメッセージを生成するスタティックメソッド集。
+ログ出力・セッション状態更新は呼び出し元が行う。インスタンス化不要。
 """
+from pydantic import ValidationError
 
 
 class ErrorHandler:
-    """例外種別に応じたユーザー向けメッセージを生成して返す共通ハンドラー"""
+    """例外からユーザー向けメッセージを生成するスタティックメソッド集。
 
-    def handle_throttling_error(self, e: Exception) -> str:
-        return "申し訳ありません。AIサービスへの接続が混雑しています。しばらく時間をおいて再度お試しください。"
+    ログ出力・セッション更新は呼び出し元が行う。インスタンス化不要。
+    """
 
-    def handle_max_tokens_error(self, e: Exception) -> str:
-        return "申し訳ありません。処理できる情報量の上限に達しました。入力内容を短くして再度お試しください。"
+    @staticmethod
+    def handle_throttling_error(e: Exception) -> str:
+        """APIスロットリングエラー処理: しばらく待つよう案内するメッセージを返す。"""
+        return (
+            "APIのリクエスト制限に達しました。しばらく待ってから再度お試しください。"
+            "繰り返しエラーが発生する場合は、管理部門（経理部）にお問い合わせください。"
+        )
 
-    def handle_context_window_error(self, e: Exception) -> str:
-        return "申し訳ありません。会話履歴が長くなりすぎました。「reset」と入力してセッションをリセットしてください。"
+    @staticmethod
+    def handle_max_tokens_error(e: Exception) -> str:
+        """トークン上限超過エラー処理: 入力を短くするよう案内するメッセージを返す。"""
+        return "入力内容が長すぎます。入力内容を短くして再度お試しください。"
 
-    def handle_fare_data_error(self, e: Exception) -> str:
-        return "申し訳ありません。運賃データの読み込みに失敗しました。システム管理者にご連絡ください。"
+    @staticmethod
+    def handle_context_window_error(e: Exception) -> str:
+        """コンテキストウィンドウ超過エラー処理: 再開を案内するメッセージを返す。"""
+        return "会話が長くなりすぎました。最初からやり直してください。"
 
-    def handle_calculation_error(self, e: Exception) -> str:
-        return "申し訳ありません。運賃の計算中にエラーが発生しました。交通費を手動で入力してください。"
+    @staticmethod
+    def handle_fare_data_error(e: Exception) -> str:
+        """運賃データファイルアクセス失敗処理: リトライ案内メッセージを返す。"""
+        return (
+            "運賃データの読み込み中にエラーが発生しました。しばらく待ってから再度お試しください。"
+            "繰り返しエラーが発生する場合は、管理部門（経理部）にお問い合わせください。"
+        )
 
-    def handle_file_save_error(self, e: Exception) -> str:
-        return "申し訳ありません。申請書ファイルの保存に失敗しました。システム管理者にご連絡ください。"
+    @staticmethod
+    def handle_calculation_error(e: Exception) -> str:
+        """運賃計算処理エラー処理: 管理部門確認依頼メッセージを返す。"""
+        return "運賃計算中にエラーが発生しました。管理部門（経理部）にお問い合わせください。"
 
-    def handle_validation_error(self, e: Exception) -> str:
-        try:
-            errors = e.errors()  # type: ignore[attr-defined]
-            if errors:
-                first = errors[0]
-                loc = first.get("loc", ())
-                field_name = ".".join(str(part) for part in loc) if loc else "入力項目"
-                return f"申請情報に不足している項目があります。{field_name}を入力してください。"
-        except Exception:
-            pass
-        return "申請情報に不足している項目があります。入力内容を確認してください。"
+    @staticmethod
+    def handle_file_save_error(e: Exception) -> str:
+        """ファイル保存失敗処理: 管理部門案内メッセージを返す。"""
+        return (
+            "申請書ファイルの保存中にエラーが発生しました。"
+            "管理部門（経理部）にお問い合わせください。"
+        )
 
-    def handle_keyboard_interrupt(self, e: Exception = None) -> str:  # type: ignore[assignment]
-        return "システムを終了します。"
+    @staticmethod
+    def handle_validation_error(e: Exception) -> str:
+        """入力バリデーションエラー処理: 再入力案内メッセージを返す。"""
+        detail = _extract_validation_detail(e)
+        return f"入力内容に誤りがあります。入力内容をご確認の上、再度入力してください。{detail}"
 
-    def handle_loop_limit_error(self, e: Exception) -> str:
-        return "処理が複雑になりすぎたため終了します。最初からやり直すには「reset」と入力してください。"
+    @staticmethod
+    def handle_keyboard_interrupt(e: Exception) -> str:
+        """キーボード割り込み処理: 終了案内メッセージを返す。"""
+        return "操作が中断されました。"
 
-    def handle_runtime_error(self, e: Exception) -> str:
-        return "申し訳ありません。処理中にエラーが発生しました。システム管理者にご連絡ください。"
+    @staticmethod
+    def handle_loop_limit_error(e: Exception) -> str:
+        """ループ上限到達エラー処理: 再試行案内メッセージを返す。"""
+        return "処理の上限回数に達しました。改めて最初からお試しください。"
 
-    def handle_unexpected_error(self, e: Exception) -> str:
-        return "申し訳ありません。予期しないエラーが発生しました。システム管理者にご連絡ください。"
+    @staticmethod
+    def handle_runtime_error(e: Exception) -> str:
+        """ランタイムエラー処理: 管理部門案内メッセージを返す。"""
+        return "処理中に問題が発生しました。管理部門（経理部）にお問い合わせください。"
+
+    @staticmethod
+    def handle_unexpected_error(e: Exception) -> str:
+        """未分類例外処理: 「処理できませんでした」メッセージを返す。"""
+        return "処理できませんでした。管理部門（経理部）にお問い合わせください。"
+
+
+def _extract_validation_detail(e: Exception) -> str:
+    """Pydantic ValidationError から詳細メッセージを抽出するモジュールレベルヘルパー。"""
+    try:
+        if isinstance(e, ValidationError):
+            msgs = [err["msg"] for err in e.errors()]
+            return " / ".join(msgs)
+        return str(e)
+    except Exception:
+        return str(e)

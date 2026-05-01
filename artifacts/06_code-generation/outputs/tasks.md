@@ -1,508 +1,473 @@
-# 実装タスク計画
+# 実装タスク計画書
 
-> 本ファイルはコード生成フェーズ（06_code-generation）の実装タスク計画書です。
-> 各タスクは依存関係順（スケルトンコード番号順）に記載しています。
-> 単体テストが全件パスするまで各タスクを完了にしてはなりません。
-> 共通参照: `skills/06-code-generation/SKILL.md`
+> 規約: skills/06-code-generation/00_rule_directory_structure.md / 00_rule_project_conventions.md
 
 ---
 
-## タスク01: データモデル定義
+## タスク1: データモデル定義
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/交通費計算ツール詳細設計書.md`（TravelExpenseCalculatorInput, TrainFareRecord, TRANSPORT_TYPE_MAP）
-  - `artifacts/05_detailed-design/outputs/申請書生成ツール詳細設計書.md`（TravelApplicationFormInput, TravelItem, ExpenseApplicationFormInput, ExpenseItem, EXPENSE_CATEGORY_MAP, parse_amount）
-  - `artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md`（UserInputText, invocation_state仕様）
-  - `artifacts/04_basic-design/outputs/データモデル基本設計.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/01_skeleton_data_models.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/models/data_models.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_data_models.py`
+  - artifacts/05_detailed-design/outputs/交通費計算ツール詳細設計書.md（TransportCalculatorInput・TransportSegmentモデル）
+  - artifacts/05_detailed-design/outputs/申請書生成ツール詳細設計書.md（TransportApplicationInput・ExpenseApplicationInput・ExpenseItemモデル）
+  - artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md（invocation_stateデータ構造）
+  - artifacts/04_basic-design/outputs/データモデル基本設計.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/01_skeleton_data_models.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/models/data_models.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_data_models.py
 - **実装内容**:
-  - `InvocationState` TypedDict: session_id, applicant_name, application_date フィールド
-  - `UserInputText` Pydanticモデル: min_length=1, max_length=500
-  - `TrainFareRecord` Pydanticモデル: departure(min_length=1), destination(min_length=1), fare(ge=0)。validate_fare field_validator(mode="before")
-  - `TRANSPORT_TYPE_MAP` 定数辞書: "train"/"鉄道"/"地下鉄"→"電車", "bus"→"バス", "taxi"/"cab"→"タクシー", "airplane"/"plane"→"飛行機"
-  - `TravelExpenseCalculatorInput` Pydanticモデル: travel_date(parse_date validator→datetime.date), departure(min_length=1), destination(min_length=1), transport_type(normalize_transport_type validator→Literal["電車","バス","タクシー","飛行機"])
-  - `TravelItem` Pydanticモデル: travel_date(str), departure(str), destination(str), transport_type(str), fare(int, ge=0), purpose(str)
-  - `TravelApplicationFormInput` Pydanticモデル: applicant_name(str), application_date(str), items(list[TravelItem], min_length=1)
-  - `ExpenseItem` Pydanticモデル: expense_date(str), category(str), amount(int, ge=0), purpose(str)
-  - `ExpenseApplicationFormInput` Pydanticモデル: applicant_name(str), application_date(str), items(list[ExpenseItem], min_length=1)
-  - `EXPENSE_CATEGORY_MAP` 定数辞書: "文房具"/"事務用品"/"消耗品"→"事務用品費", "ホテル"/"旅館"/"宿泊"→"宿泊費", "資格"/"検定"→"資格精算費", "その他"→"その他経費"
-  - `parse_amount` ヘルパー関数: "1,000円" 等の文字列をintに変換
+  - 共通バリデーター関数: `normalize_station_name`, `normalize_transport_type`, `validate_date`, `validate_business_purpose`, `validate_amount`, `normalize_expense_category`
+  - エージェント状態モデル: `InvocationState`（applicant_name, application_date）
+  - ツール入力モデル: `TransportCalculatorInput`（departure, destination, transport_type, travel_date）
+  - 出力生成モデル: `TransportSegment`, `TransportApplicationInput`, `ExpenseItem`, `ExpenseApplicationInput`
 - **単体テスト内容**:
-  - UserInputText: 正常値（1文字, 500文字）, min_length=1違反（空文字）, max_length=500違反（501文字）
-  - TravelExpenseCalculatorInput: travel_date正常変換（YYYY-MM-DD）, parse_dateエラー（不正形式）, normalize_transport_type（"train"→"電車", "bus"→"バス", "taxi"→"タクシー", "airplane"→"飛行機", "cab"→"タクシー", "地下鉄"→"電車"）, transport_type不正値（"自転車"）, departure/destination空文字エラー, departure/destination空白のみエラー
-  - TrainFareRecord: fare=0（正常）, fare負値エラー, departure/destination空文字エラー
-  - TravelApplicationFormInput: 正常値, items空リストエラー
-  - ExpenseApplicationFormInput: 正常値, items空リストエラー
-  - parse_amount: "1,000円"→1000, "500"→500, カンマなし整数文字列→int
+  - `normalize_station_name`: 「駅」「Station」除去・strip確認
+  - `normalize_transport_type`: 「電車」→「train」等の全マッピング確認
+  - `validate_date`: YYYY-MM-DD正常・不正形式テスト
+  - `validate_business_purpose`: 空文字列・空白のみで ValidationError
+  - `validate_amount`: 0以下でバリデーションエラー
+  - `normalize_expense_category`: 「事務用品」→「事務用品費」等のマッピング・判断不能→「その他経費」
+  - `TransportCalculatorInput`: 正常・異常系（空文字・不正交通手段・不正日付）
+  - `TransportApplicationInput`: segments 0件でバリデーションエラー
+  - `ExpenseApplicationInput`: items 0件でバリデーションエラー
 
 ---
 
-## タスク02: モデル設定
+## タスク2: LLMモデル設定
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/03_system-design/outputs/システム基本情報.md`
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/02_skeleton_model_config.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/config/model_config.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_model_config.py`
+  - artifacts/03_system-design/outputs/システム基本情報.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/02_skeleton_model_config.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/config/model_config.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_model_config.py
 - **実装内容**:
-  - `DEFAULT_MODEL_ID` 定数: `"jp.anthropic.claude-sonnet-4-5-20250929-v1:0"`
-  - `ModelConfig` クラス: `get_model()` クラスメソッド → `BedrockModel(model_id=DEFAULT_MODEL_ID)` を返す
-  - `ModelRetryStrategy` 設定: max_attempts=6, initial_delay=4, max_delay=240
-  - `get_model()` は `BedrockModel` に `ModelRetryStrategy` を設定して返す
+  - `ModelConfig` クラス（スタティックメソッドのみ）
+  - `DEFAULT_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"`
+  - `GUARDRAIL_ID`・`GUARDRAIL_VERSION` を環境変数から取得
+  - `get_model()` → `BedrockModel` インスタンスを返す
 - **単体テスト内容**:
-  - `get_model()` が `BedrockModel` インスタンスを返すこと
-  - `BedrockModel` の model_id が `DEFAULT_MODEL_ID` と一致すること
-  - 返り値の型が BedrockModel であること
+  - `get_model()` が `BedrockModel` を返すこと
+  - 環境変数 `GUARDRAIL_ID`・`GUARDRAIL_VERSION` が正しく読み込まれること
 
 ---
 
-## タスク03: エラーハンドラー・例外クラス定義
+## タスク3: エラーハンドラー
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/ErrorHandler詳細設計書.md`
-  - `artifacts/03_system-design/outputs/例外処理方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/03_skeleton_error_handler.md`
-- **成果物のファイルパス**:
-  - `artifacts/06_code-generation/src/handlers/error_handler.py`
-  - `artifacts/06_code-generation/src/handlers/exceptions.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_error_handler.py`
+  - artifacts/05_detailed-design/outputs/ErrorHandler詳細設計書.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/03_skeleton_error_handler.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/handlers/error_handler.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_error_handler.py
 - **実装内容**:
-  - `handlers/exceptions.py`: `LoopLimitError(Exception)` クラス。__init__(self, current_iteration: int, max_iterations: int, agent_name: str)。current_iteration, max_iterations, agent_name インスタンス変数を持つ
-  - `handlers/error_handler.py`: `ErrorHandler` クラス（インスタンス変数なし、__init__不要）
-  - `ErrorHandler` 11メソッド（すべてロギングなし、メッセージ文字列を生成して返すのみ）:
-    - `handle_throttling_error(e)` → スロットリングエラーメッセージ返却
-    - `handle_max_tokens_error(e)` → 最大トークン数エラーメッセージ返却
-    - `handle_context_window_error(e)` → コンテキストウィンドウエラーメッセージ返却
-    - `handle_fare_data_error(message)` → 運賃データエラーメッセージ返却
-    - `handle_calculation_error(e)` → 計算エラーメッセージ返却
-    - `handle_file_save_error(e)` → ファイル保存エラーメッセージ返却
-    - `handle_validation_error(e)` → バリデーションエラー詳細メッセージ返却
-    - `handle_keyboard_interrupt()` → Ctrl+C終了メッセージ返却
-    - `handle_loop_limit_error(e)` → `"処理が複雑すぎるため終了します。"` 返却
-    - `handle_runtime_error(e)` → ランタイムエラーメッセージ返却
-    - `handle_unexpected_error(e)` → `"申し訳ありません。予期しないエラーが発生しました。システム管理者にご連絡ください。"` 返却
-  - **注意**: ErrorHandler 自身はログ出力を行わない。呼び出し元が ErrorHandler 呼び出し前にログを記録する
+  - `ErrorHandler` クラス（全メソッド `@staticmethod`、インスタンス化不要）
+  - `handle_throttling_error`, `handle_max_tokens_error`, `handle_context_window_error`
+  - `handle_fare_data_error`, `handle_calculation_error`, `handle_file_save_error`
+  - `handle_validation_error`（Pydantic ValidationError の日本語化）
+  - `handle_keyboard_interrupt`, `handle_loop_limit_error`, `handle_runtime_error`, `handle_unexpected_error`
 - **単体テスト内容**:
-  - LoopLimitError: current_iteration=5, max_iterations=10, agent_name="test_agent" で生成し各フィールドが正しいこと
-  - LoopLimitError が Exception のサブクラスであること
-  - ErrorHandler.handle_loop_limit_error() が `"処理が複雑すぎるため終了します。"` を返すこと
-  - ErrorHandler.handle_unexpected_error() が `"申し訳ありません。予期しないエラーが発生しました。システム管理者にご連絡ください。"` を返すこと
-  - ErrorHandler.handle_validation_error() が ValidationError から生成したメッセージ文字列を返すこと（空でないこと）
-  - ErrorHandler の各メソッドが文字列を返すこと（戻り値の型チェック）
+  - 各メソッドが日本語メッセージ（str）を返すこと
+  - `handle_loop_limit_error` が max_iterations を含むメッセージを返すこと
+  - `handle_validation_error` がフィールド名を含む日本語メッセージを返すこと
+  - 各メソッド内で logging が呼び出されないこと
+  - None を渡した場合でも例外が発生しないこと
 
 ---
 
-## タスク04: LoopControlHook実装
+## タスク4: LoopControlHook
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/LoopControlHook詳細設計書.md`
-  - `artifacts/03_system-design/outputs/実行制御方針.md`
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/04_skeleton_loop_control_hook.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/handlers/hooks.py`（LoopControlHook部分）
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_loop_control_hook.py`
+  - artifacts/05_detailed-design/outputs/LoopControlHook詳細設計書.md
+  - artifacts/03_system-design/outputs/実行制御方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/04_skeleton_loop_control_hook.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/handlers/loop_control_hook.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_loop_control_hook.py
 - **実装内容**:
-  - `handlers/hooks.py` に `LoopControlHook` クラスを実装（`HookProvider` プロトコル準拠）
-  - `__init__(self, max_iterations: int = 10)`: max_iterations, _iteration_count=0 インスタンス変数
-  - `register_hooks(self, registry: HookRegistry, **kwargs)`: 6イベントを登録
-  - `_handle_before_invocation(event)`: _iteration_count=0 にリセット（INFOログ）
-  - `_handle_before_model_call(event)`: 現在のイテレーション数をDEBUGログ
-  - `_handle_after_model_call(event)`: event.exception が None の場合のみ `_increment_and_check(agent_name)` 呼び出し
-  - `_handle_after_invocation(event)`: 総イテレーション数をINFOログ（カウンタリセットしない）
-  - `_handle_before_tool_call(event)`: ツール名をDEBUGログ
-  - `_handle_after_tool_call(event)`: ツール名をDEBUGログ
-  - `_increment_and_check(agent_name)`: _iteration_count+=1、max_iterations超過時に `LoopLimitError(current_iteration, max_iterations, agent_name)` を送出
+  - `LoopLimitError` カスタム例外クラス（current_iteration, max_iterations, agent_name フィールド）
+  - `LoopControlHook(HookProvider)` クラス
+  - `register_hooks`: BeforeInvocationEvent, BeforeModelCallEvent, AfterModelCallEvent, BeforeToolCallEvent, AfterToolCallEvent, AfterInvocationEvent を登録
+  - `_before_invocation_handler`: `_loop_count = 0` に初期化・INFOログ
+  - `_before_model_call_handler`: ループ開始ログ
+  - `_after_model_call_handler`: カウントアップ・上限チェック・`LoopLimitError` 発生（event.exception 存在時スキップ）
+  - `_before_tool_call_handler`: ツール呼び出し開始ログ
+  - `_after_tool_call_handler`: ツール呼び出し完了ログ
+  - `_after_invocation_handler`: 合計ループ回数ログ（リセットなし）
+  - `_get_loop_count` プロパティ
 - **単体テスト内容**:
-  - BeforeInvocationEvent発火で _iteration_count が 0 にリセットされること
-  - AfterModelCallEvent発火（exception=None）で _iteration_count が 1 増加すること
-  - AfterModelCallEvent発火（exception有り）で _iteration_count が増加しないこと
-  - max_iterations=3 の場合、3回のAfterModelCallEvent後に LoopLimitError が送出されること
-  - LoopLimitError の current_iteration と max_iterations が正しい値を持つこと
-  - register_hooks が 6種のイベントを登録すること
+  - max_iterations=10 で9回AfterModelCallEvent後に停止しないこと
+  - max_iterations=10 で10回目に LoopLimitError が発生すること
+  - LoopLimitError が正しいフィールドを保持すること
+  - BeforeInvocationEvent でカウンターが0にリセットされること
+  - AfterInvocationEvent でカウンターがリセットされないこと
+  - event.exception 存在時にカウントアップされないこと
+  - max_iterations=1 で1回目に LoopLimitError が発生すること
 
 ---
 
-## タスク05: HumanApprovalHook実装
+## タスク5: HumanApprovalHook
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/HumanApprovalHook詳細設計書.md`
-  - `artifacts/03_system-design/outputs/実行制御方針.md`
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/05_skeleton_human_approval_hook.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/handlers/hooks.py`（HumanApprovalHook部分をLoopControlHookと同ファイルに追記）
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_human_approval_hook.py`
+  - artifacts/05_detailed-design/outputs/HumanApprovalHook詳細設計書.md
+  - artifacts/03_system-design/outputs/実行制御方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/05_skeleton_human_approval_hook.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/handlers/human_approval_hook.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_human_approval_hook.py
 - **実装内容**:
-  - `handlers/hooks.py` に `HumanApprovalHook` クラスを追記（`HookProvider` プロトコル準拠）
-  - `__init__(self)`: `_approval_tool_names = {"generate_travel_expense_form", "generate_expense_form"}` インスタンス変数
-  - `register_hooks(self, registry: HookRegistry, **kwargs)`: BeforeToolCallEvent のみ登録
-  - `_handle_before_tool_call(event)`: ツール名が `_approval_tool_names` 外ならスルー（INFOログ）。対象ツールなら `_request_approval(tool_name, event.tool_params)` 呼び出し
-  - `_request_approval(tool_name, tool_params) → tuple[bool, str]`: "申請書を生成してよろしいですか？\nOK・修正・キャンセルのいずれかを入力してください。" を表示。strip().lower()で正規化。"ok"→(True,""), "修正"→修正内容入力→(False,修正内容), "キャンセル"→(False,"CANCEL")。不正入力は再入力促し。EOFError→(False,"CANCEL")
-  - `_log_approval(tool_name, selection, timestamp)`: INFOレベルでDATA-009（tool_name, selection, timestamp）を `logs/error.log` に記録
-  - ブロック解除: result==(True,"") → 何もしない
-  - キャンセル: result[1]=="CANCEL" → `event.cancel_tool = "申請をキャンセルしました。"`
-  - 修正: result[0]==False and result[1]!="CANCEL" → `event.cancel_tool = result[1]`
+  - `HumanApprovalHook(HookProvider)` クラス（`target_tool: str` で初期化）
+  - `register_hooks`: BeforeToolCallEvent を登録
+  - `_before_tool_call_handler`: ツール名チェック → target_tool 一致時のみ承認フロー
+  - `_normalize_approval_result`: ok/modify/cancel/unknown への正規化（別表記含む）
+  - `_approval_callback`: 最大3回再入力。(True,"")/(False,修正内容)/(False,"CANCEL") を返す
+  - `event.cancel_tool` にメッセージをセット（`event.cancel()` は不使用）
+  - EOFError 処理
 - **単体テスト内容**:
-  - TOOL-001（calculate_travel_expense）でスルーされること（event.cancel_toolが設定されないこと）
-  - TOOL-002（generate_travel_expense_form）でブロックされること
-  - "ok"入力 → (True,"") が返り event.cancel_tool が設定されないこと
-  - "修正"入力 → (False,"修正内容") が返り event.cancel_tool に修正内容がセットされること
-  - "キャンセル"入力 → (False,"CANCEL") が返り event.cancel_tool="申請をキャンセルしました。" がセットされること
-  - 無効入力後に"ok"入力 → 再入力プロセスが動作し最終的に(True,"") が返ること
-  - EOFError → (False,"CANCEL") が返ること
-  - register_hooks が BeforeToolCallEvent のみ登録すること
+  - target_tool 一致時のみ承認要求が実施されること
+  - "OK" 入力でツール実行が継続されること
+  - "修正" 入力で event.cancel_tool がセットされること
+  - "キャンセル" 入力で (False, "CANCEL") が返されること
+  - "yes", "はい" 等が "ok" に正規化されること
+  - 認識不能入力が3回続いた場合にキャンセル扱いとなること
+  - EOFError 発生時にキャンセル扱いとなること
+  - event.stop_reason が使用されないこと
 
 ---
 
-## タスク06: セッションマネージャー
+## タスク6: セッションマネージャー
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md`（セッションID生成方法, FileSessionManager設定）
-  - `artifacts/03_system-design/outputs/セッション管理方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/06_skeleton_session_manager.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/session/session_manager.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_session_manager.py`
+  - artifacts/04_basic-design/outputs/セッションマネージャ基本設計.md
+  - artifacts/03_system-design/outputs/セッション管理方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/06_skeleton_session_manager.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/session/session_manager.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_session_manager.py
 - **実装内容**:
   - `SessionManagerFactory` クラス
-  - `generate_session_id() → str`: `datetime.now().strftime("%Y%m%d%H%M%S") + "_" + uuid.uuid4().hex[:8]` 形式（例: `20260323153045_a1b2c3d4`）
-  - `get_storage_dir() → str`: `"data/sessions/"` を返す
-  - `create_session_manager(session_id: str) → FileSessionManager`: `FileSessionManager(session_id=session_id, storage_path="data/sessions/")` を返す
-  - `get_session_path(session_id: str) → str`: セッションファイルの完全パスを返す（`data/sessions/{session_id}.json` 等）
+  - `create(session_id, storage_path="storage/sessions/")` → `FileSessionManager` を返す
+  - strands SDK の `FileSessionManager` をラップ
 - **単体テスト内容**:
-  - generate_session_id() がパターン `\d{14}_[a-f0-9]{8}` に一致すること
-  - 複数回呼び出しで異なるIDが生成されること（一意性確認）
-  - get_storage_dir() が "data/sessions/" を返すこと
-  - create_session_manager() が FileSessionManager インスタンスを返すこと
+  - `create()` が `FileSessionManager` インスタンスを返すこと
+  - `storage_path` が正しく設定されること
 
 ---
 
-## タスク07: オーケストレータープロンプト
+## タスク7: 申請ルール（交通費）
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md`（2.3.1節 プロンプト全文）
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/07_skeleton_prompt_orchestrator.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/prompt/prompt_orchestrator.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_prompt_orchestrator.py`
+  - artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md（2.3.1 システムプロンプト・申請ルール）
+  - artifacts/02_system-requirements/outputs/業務ルール定義.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/09_skeleton_policies.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/agent_knowledge/transportation_policies.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_transportation_policies.py
 - **実装内容**:
-  - `ORCHESTRATOR_SYSTEM_PROMPT` 定数（静的文字列）: AG-001詳細設計書 2.3.1節のプロンプト全文をそのまま定義
-  - 動的生成不要（申請期限チェックはAG-002/AG-003が担当するため）
+  - `get_transportation_policies()` → 交通費申請ルール文字列を返す関数
+  - BRL-01〜BRL-16 の交通費関連ルールをテキストとして定義
 - **単体テスト内容**:
-  - `ORCHESTRATOR_SYSTEM_PROMPT` が非空文字列であること
-  - "travel_application_agent_tool" という文字列が含まれること
-  - "expense_application_agent_tool" という文字列が含まれること
-  - "BRL-01" または "申請種別" に関するキーワードが含まれること
+  - `get_transportation_policies()` が非空の文字列を返すこと
+  - 返却文字列に主要なルール（BRL-05, BRL-06, BRL-07, BRL-08, BRL-10, BRL-11）が含まれること
 
 ---
 
-## タスク08a: 交通費精算申請エージェントプロンプト
+## タスク8: 申請ルール（経費）
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md`（プロンプト設計章）
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/08_skeleton_prompt_specialist.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/prompt/prompt_travel.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_prompt_travel.py`
+  - artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md（2.3.1 システムプロンプト・申請ルール）
+  - artifacts/02_system-requirements/outputs/業務ルール定義.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/09_skeleton_policies.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/agent_knowledge/receipt_policies.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_receipt_policies.py
 - **実装内容**:
-  - `build_travel_system_prompt(application_date: str) → str` 関数（Pattern B: 動的生成）
-  - application_date から申請期限（application_date - 3ヶ月）を `relativedelta` で計算して deadline_date を生成
-  - `agent_knowledge/transportation_policies.py` を `open()` でテキスト読み込みして transportation_policies として埋め込む
-  - application_date, deadline_date, transportation_policies をプロンプト本文にf-string埋め込み
-  - AG-002詳細設計書のプロンプト仕様に従ったシステムプロンプト文字列を返す
+  - `get_receipt_policies()` → 経費申請ルール文字列を返す関数
+  - BRL-07・BRL-09・BRL-11〜BRL-13 の経費関連ルールをテキストとして定義
 - **単体テスト内容**:
-  - `build_travel_system_prompt("2026-04-28")` が文字列を返すこと
-  - 返り値に application_date("2026-04-28") が含まれること
-  - 返り値に deadline_date（3ヶ月前の日付）が含まれること
-  - 返り値が非空文字列であること
+  - `get_receipt_policies()` が非空の文字列を返すこと
+  - 返却文字列に主要なルール（BRL-07, BRL-09, BRL-11, BRL-12, BRL-13）が含まれること
 
 ---
 
-## タスク08b: 経費精算申請エージェントプロンプト
+## タスク9: オーケストレータープロンプト
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md`（プロンプト設計章）
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/08_skeleton_prompt_specialist.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/prompt/prompt_expense.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_prompt_expense.py`
+  - artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md（2.3.1 システムプロンプト）
+- **参照するスケルトンコード**: skills/templates/06_code-generation/07_skeleton_prompt_orchestrator.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/prompt/prompt_orchestrator.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_prompt_orchestrator.py
 - **実装内容**:
-  - `build_expense_system_prompt(application_date: str) → str` 関数（Pattern B: 動的生成）
-  - application_date から申請期限（application_date - 3ヶ月）を `relativedelta` で計算して deadline_date を生成
-  - `agent_knowledge/receipt_policies.py` を `open()` でテキスト読み込みして receipt_policies として埋め込む
-  - application_date, deadline_date, receipt_policies をプロンプト本文にf-string埋め込み
-  - AG-003詳細設計書のプロンプト仕様に従ったシステムプロンプト文字列を返す
+  - `ORCHESTRATOR_SYSTEM_PROMPT` 定数（静的定数）
+  - 設計書 2.3.1 のプロンプト全文をそのまま定義
 - **単体テスト内容**:
-  - `build_expense_system_prompt("2026-04-28")` が文字列を返すこと
-  - 返り値に deadline_date（3ヶ月前の日付）が含まれること
-  - 返り値が非空文字列であること
+  - `ORCHESTRATOR_SYSTEM_PROMPT` が非空の文字列であること
+  - 主要なキーワード（transport_agent, expense_agent, BRL-01等）が含まれること
 
 ---
 
-## タスク09a: 交通費ポリシー定義
+## タスク10: 専門エージェントプロンプト（交通費・経費）
 
 - **ステータス**: [x] 完了
 - **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md`（業務ルール章・申請ルールチェック仕様）
-  - `artifacts/02_system-requirements/outputs/業務ルール定義.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/09_skeleton_policies.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/agent_knowledge/transportation_policies.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_transportation_policies.py`
-- **実装内容**:
-  - `TRANSPORTATION_POLICIES` 定数（文字列）: 交通費精算に関する業務ルール（BRL-13 申請期限, BRL-14 上長承認, BRL-08 差し戻しリスク, BRL-15 駅名正規化ルール, BRL-11 一括収集方針, BRL-12 自動計算優先等）をテキストで定義
-  - AG-002のプロンプトに埋め込むためのエージェントナレッジとして整理
-- **単体テスト内容**:
-  - `TRANSPORTATION_POLICIES` が非空文字列であること
-  - 申請期限に関するキーワードが含まれること（"申請期限" または "BRL-13"）
-  - 上長承認に関するキーワードが含まれること（"上長" または "BRL-14"）
-
----
-
-## タスク09b: 領収書ポリシー定義
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md`（業務ルール章）
-  - `artifacts/02_system-requirements/outputs/業務ルール定義.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/09_skeleton_policies.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/agent_knowledge/receipt_policies.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_receipt_policies.py`
-- **実装内容**:
-  - `RECEIPT_POLICIES` 定数（文字列）: 経費精算に関する業務ルール（BRL-16 経費申請期限, BRL-17 領収書要件, BRL-18 上限金額, BRL-19 禁止経費等）をテキストで定義
-  - AG-003のプロンプトに埋め込むためのエージェントナレッジとして整理
-- **単体テスト内容**:
-  - `RECEIPT_POLICIES` が非空文字列であること
-  - 領収書に関するキーワードが含まれること（"領収書" または "BRL-17"）
-
----
-
-## タスク10a: 交通費計算ツール
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/交通費計算ツール詳細設計書.md`（全章）
-  - `artifacts/04_basic-design/outputs/交通費計算ツール基本設計書.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/10_skeleton_tools.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/tools/travel_tools.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_travel_tools.py`
-- **実装内容**:
-  - モジュールレベル変数: `_train_fares: list[TrainFareRecord] = []`, `_fixed_fares: dict[str, int] = {}`
-  - `load_fare_data() → tuple[bool, str]`: アプリ起動時に1回呼び出す。`os.path.exists()` で事前チェック（FileNotFoundError捕捉との併用禁止）。train_routes.jsonをTrainFareRecordでバリデーション後 `_train_fares` に格納。fixed_fares.jsonを `_fixed_fares` に格納。成功時 `(True,"")`, 失敗時 `(False, エラーメッセージ)` を返す（例外を再送出しない）
-  - `calculate_travel_expense` 関数: `@tool(context=True)` デコレーター。引数: travel_date, departure, destination, transport_type（`applicant_name`/`application_date` は引数に含めない、invocation_stateから取得）
-  - `TravelExpenseCalculatorInput` でバリデーション。ValidationError → `{"success": False, "message": ...}` 返却
-  - 電車: `_train_fares` から線形検索。未発見 → ValueError送出 → `{"success": False, "message": "指定された経路の運賃データが見つかりませんでした。交通費を手動で入力してください。"}` 返却
-  - バス/タクシー/飛行機: `_fixed_fares` から取得
-  - 成功: `{"success": True, "fare": int, "calculation_basis": str}` 返却
-  - INFOログ（開始時・成功時）、ERRORログ（ValidationError・経路未発見）
-  - データパス: `data/templates/train_routes.json`, `data/templates/fixed_fares.json`
-- **単体テスト内容**:
-  - load_fare_data(): train_routes.jsonが存在する場合に(True,"")を返すこと（テスト用モックデータ使用）
-  - load_fare_data(): train_routes.jsonが存在しない場合に(False, エラーメッセージ)を返すこと
-  - calculate_travel_expense(): 電車区間（DATA-011に存在する経路）でsuccess=True, 正しいfare, calculation_basis="電車経路テーブル参照"を返すこと
-  - calculate_travel_expense(): バスでsuccess=True, fare=230, calculation_basis="固定運賃参照"を返すこと
-  - calculate_travel_expense(): タクシーでsuccess=True, fare=10000を返すこと
-  - calculate_travel_expense(): 飛行機でsuccess=True, fare=50000を返すこと
-  - calculate_travel_expense(): transport_type="train"が正規化されて電車処理されること
-  - calculate_travel_expense(): 存在しない電車区間でsuccess=False, メッセージが返ること
-  - calculate_travel_expense(): transport_type="自転車"でsuccess=Falseが返ること
-  - calculate_travel_expense(): departure=""でsuccess=Falseが返ること
-  - calculate_travel_expense(): travel_date不正形式でsuccess=Falseが返ること
-
----
-
-## タスク10b: 申請書生成ツール
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/申請書生成ツール詳細設計書.md`（全章）
-  - `artifacts/04_basic-design/outputs/申請書生成ツール基本設計書.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/10_skeleton_tools.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/tools/output_generator.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_output_generator.py`
-- **実装内容**:
-  - `generate_travel_expense_form` 関数: `@tool(context=True)` デコレーター。invocation_stateからapplicant_name, application_date, session_idを取得
-  - テンプレートパス: `data/templates/交通費申請書_template.xlsx`。出力先: `data/output/{session_id}/交通費精算申請書_{timestamp}.xlsx`
-  - openpyxl でテンプレートを開き、B3=申請者名, B4=申請日。行7+i に各移動区間（A=No, B=移動日, C=出発地, D=目的地, E=交通手段, F=金額, G=業務目的, H=空白）。合計金額を最終行+2のH列に記入
-  - `TravelApplicationFormInput` でバリデーション。ValidationError → `{"success": False, "message": ...}` 返却
-  - 成功: `{"success": True, "file_path": str, "total_fare": int}` 返却
-  - `generate_expense_form` 関数: `@tool(context=True)` デコレーター。同様の構造
-  - テンプレートパス: `data/templates/経費精算申請書_template.xlsx`。出力先: `data/output/{session_id}/経費精算申請書_{timestamp}.xlsx`
-  - `EXPENSE_CATEGORY_MAP` でカテゴリー正規化
-  - `ExpenseApplicationFormInput` でバリデーション
-  - 成功: `{"success": True, "file_path": str, "total_amount": int}` 返却
-  - `data/output/{session_id}/` ディレクトリを `os.makedirs(..., exist_ok=True)` で自動生成
-- **単体テスト内容**:
-  - generate_travel_expense_form(): 正常データ（2区間）でsuccess=True, file_pathが返ること（モックopenpyxl使用）
-  - generate_travel_expense_form(): テンプレートファイルが存在しない場合にsuccess=Falseが返ること
-  - generate_travel_expense_form(): バリデーションエラー（items空リスト）でsuccess=Falseが返ること
-  - generate_expense_form(): 正常データでsuccess=True, file_pathが返ること
-  - generate_expense_form(): EXPENSE_CATEGORY_MAP変換（"文房具"→"事務用品費"）が正しく行われること
-  - 出力ファイルのファイル名フォーマット（タイムスタンプ含む）が正しいこと
-
----
-
-## タスク11: オーケストレーターエージェント
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md`（全章）
-  - `artifacts/03_system-design/outputs/マルチエージェント連携設計.md`
-  - `artifacts/03_system-design/outputs/セッション管理方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/11_skeleton_orchestrator_agent.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/agents/orchestrator_agent.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_orchestrator_agent.py`
-- **実装内容**:
-  - `create_orchestrator_agent(session_id, applicant_name, application_date) → Agent` ファクトリ関数
-  - FileSessionManager(session_id=session_id, storage_path="data/sessions/") 生成
-  - Agent 生成: system_prompt=ORCHESTRATOR_SYSTEM_PROMPT（静的定数）, tools=[travel_application_agent_tool, expense_application_agent_tool], conversation_manager=SlidingWindowConversationManager(window_size=30, should_truncate_results=True, per_turn=False), hooks=[LoopControlHook(max_iterations=10)], callback_handler省略（デフォルト）, session_manager=FileSessionManager
-  - HumanApprovalHook は AG-001 に登録しない
-  - `main()` 関数: ウェルカムメッセージ表示（起動時1回のみ）。申請者名ループ収集（空文字は再促し）。application_date=datetime.date.today().isoformat()。session_id生成。FileSessionManager・Agentインスタンス生成。対話ループ: `input("\n\n入力内容（終了時はquit）: ")`でユーザー入力取得。"exit"/"quit"でbreak。"reset"/"リセット"/"最初から"でAgent再生成・申請者名再収集。UserInputTextバリデーション失敗→エラーメッセージ表示・continue。agent(user_input, invocation_state={session_id, applicant_name, application_date})呼び出し
-  - 例外ハンドリング（6種): KeyboardInterrupt(INFO,break), LoopLimitError(WARNING,continue), ContextWindowOverflowException(WARNING,continue), MaxTokensReachedException(WARNING,continue), RuntimeError(ERROR,exc_info=True,continue), Exception(ERROR,exc_info=True,continue)
-  - 全例外ログにsession_idを付加。全例外でErrorHandlerを呼び出しprint()でメッセージ表示
-- **単体テスト内容**:
-  - create_orchestrator_agent() が Agent インスタンスを返すこと（モック使用）
-  - Agent生成時のtools=[travel_application_agent_tool, expense_application_agent_tool] が設定されること
-  - SlidingWindowConversationManager(window_size=30) が設定されること
-  - hooks に HumanApprovalHook が含まれないこと
-  - hooks に LoopControlHook(max_iterations=10) が含まれること
-
----
-
-## タスク12a: 交通費精算申請エージェント
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md`（全章）
-  - `artifacts/03_system-design/outputs/マルチエージェント連携設計.md`
-  - `artifacts/03_system-design/outputs/セッション管理方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/12_skeleton_specialist_agent.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/agents/travel_agent.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_travel_agent.py`
-- **実装内容**:
-  - `_agent_instances: dict[str, Agent] = {}` モジュールレベルキャッシュ
-  - `_get_travel_agent(session_id, applicant_name, application_date) → Agent` ファクトリ関数（プライベート）
-  - Agent生成: system_prompt=build_travel_system_prompt(application_date), tools=[calculate_travel_expense, generate_travel_expense_form], model=get_model(), conversation_manager=SlidingWindowConversationManager(window_size=20, should_truncate_results=True, per_turn=False), hooks=[HumanApprovalHook(), LoopControlHook(max_iterations=10)], callback_handler=None, session_manager=FileSessionManager(session_id=session_id, storage_path="data/sessions/")
-  - `_agent_instances[session_id]` にキャッシュ（セッション内再利用）
-  - `travel_application_agent_tool` 関数: `@tool(context=True)` デコレーター。ToolContextから session_id, applicant_name, application_date を取得。`_get_travel_agent(...)` でエージェント取得。`agent(query, invocation_state={session_id, applicant_name, application_date})` 呼び出し
-  - 例外ハンドリング（5種): LoopLimitError(WARNING), ContextWindowOverflowException(WARNING), MaxTokensReachedException(WARNING), RuntimeError(ERROR,exc_info=True), Exception(ERROR,exc_info=True)
-  - ログメッセージに `query[:50]` と `session_id` を含める
-- **単体テスト内容**:
-  - _get_travel_agent() が Agent インスタンスを返すこと（モック使用）
-  - SlidingWindowConversationManager(window_size=20) が設定されること
-  - tools に calculate_travel_expense と generate_travel_expense_form が含まれること
-  - hooks に HumanApprovalHook と LoopControlHook が含まれること
-  - callback_handler=None が設定されること
-  - _agent_instances キャッシュ: 同一session_idで2回呼び出すと同じインスタンスが返ること
-
----
-
-## タスク12b: 経費精算申請エージェント
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md`（全章）
-  - `artifacts/03_system-design/outputs/マルチエージェント連携設計.md`
-  - `artifacts/03_system-design/outputs/セッション管理方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/12_skeleton_specialist_agent.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/agents/expense_agent.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_expense_agent.py`
-- **実装内容**:
-  - `_agent_instances: dict[str, Agent] = {}` モジュールレベルキャッシュ
-  - `_get_expense_agent(session_id, applicant_name, application_date) → Agent` ファクトリ関数
-  - Agent生成: system_prompt=build_expense_system_prompt(application_date), tools=[generate_expense_form]（TOOL-001は含めない）, model=get_model(), conversation_manager=SlidingWindowConversationManager(window_size=15, should_truncate_results=True, per_turn=False), hooks=[HumanApprovalHook(), LoopControlHook(max_iterations=10)], callback_handler=None, session_manager=FileSessionManager(session_id=session_id, storage_path="data/sessions/")
-  - `expense_application_agent_tool` 関数: `@tool(context=True)` デコレーター。travel_application_agent_toolと同パターン
-  - 例外ハンドリング（5種）: travel_agentと同様
-- **単体テスト内容**:
-  - _get_expense_agent() が Agent インスタンスを返すこと
-  - SlidingWindowConversationManager(window_size=15) が設定されること（AG-002の20ではなく15）
-  - tools に generate_expense_form のみが含まれること（calculate_travel_expense が含まれないこと）
-  - hooks に HumanApprovalHook と LoopControlHook が含まれること
-  - callback_handler=None が設定されること
-
----
-
-## タスク13: アプリケーションエントリーポイント
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md`（3.1.1節 main関数）
-  - `artifacts/03_system-design/outputs/共通設定方針.md`
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/13_skeleton_main.md`
-- **成果物のファイルパス**: `artifacts/06_code-generation/src/main.py`
-- **単体テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/unit/test_main.py`
-- **実装内容**:
-  - `load_dotenv()` でenv読み込み
-  - ロギング設定: `logs/` ディレクトリへの出力, ファイルハンドラー（`logs/error.log`）とコンソールハンドラー設定, ログレベル設定
-  - `load_fare_data()` 呼び出し: 失敗（`(False, msg)`）の場合はエラーメッセージ表示してアプリ起動を中断（sys.exit or return）
-  - `os.makedirs(f"data/output/{session_id}", exist_ok=True)` でセッション別出力ディレクトリ生成
-  - `main()` 関数: `agents/orchestrator_agent.py` の main() を呼び出すか、または直接メインロジックを持つ
-  - `if __name__ == "__main__": main()` エントリーポイント
-- **単体テスト内容**:
-  - main.pyがimport可能であること（構文エラーなし）
-  - load_fare_data()失敗時にアプリが起動中断すること（モック使用）
-  - loggingの設定が正しく初期化されること
-
----
-
-## タスク14: データファイルおよび資材配置
-
-- **ステータス**: [x] 完了
-- **参照する設計書**:
-  - `artifacts/05_detailed-design/outputs/交通費計算ツール詳細設計書.md`（4章 データ設計）
-  - `artifacts/05_detailed-design/outputs/申請書生成ツール詳細設計書.md`（データ設計章）
-- **参照するスケルトンコード**: `skills/templates/06_code-generation/14_design_data_files.md`
+  - artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md（2.3.1 システムプロンプト）
+  - artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md（2.3.1 システムプロンプト）
+- **参照するスケルトンコード**: skills/templates/06_code-generation/08_skeleton_prompt_specialist.md
 - **成果物のファイルパス**:
-  - `artifacts/06_code-generation/src/data/templates/train_routes.json`（materials/06_code-generation/train_fares.json をコピー・リネーム）
-  - `artifacts/06_code-generation/src/data/templates/fixed_fares.json`（materials/06_code-generation/fixed_fares.json をコピー）
-  - `artifacts/06_code-generation/src/data/templates/交通費精算申請書テンプレート.xlsx`（materials/06_code-generation/交通費申請書_template.xlsx をコピー・リネーム）
-  - `artifacts/06_code-generation/src/data/templates/経費精算申請書テンプレート.xlsx`（materials/06_code-generation/経費精算申請書_template.xlsx をコピー・リネーム）
-  - `artifacts/06_code-generation/src/.gitignore`（materials/06_code-generation/.gitignore をコピー）
-  - `artifacts/06_code-generation/.env.template`（materials/06_code-generation/.env.template をコピー）
-- **単体テストコードのファイルパス**: なし（ファイル配置タスクのため単体テスト不要）
+  - artifacts/06_code-generation/src/prompt/prompt_transport.py
+  - artifacts/06_code-generation/src/prompt/prompt_expense.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_prompt_specialist.py
 - **実装内容**:
-  - `artifacts/06_code-generation/src/data/templates/` ディレクトリを作成
-  - `artifacts/06_code-generation/src/data/` ディレクトリを作成（固定運賃・経路データは templates/ 配下に配置）
-  - materials/06_code-generation/train_fares.json → src/data/templates/train_routes.json にコピー（ファイル名変更）
-  - materials/06_code-generation/fixed_fares.json → src/data/templates/fixed_fares.json にコピー
-  - materials/06_code-generation/交通費申請書_template.xlsx → src/data/templates/交通費精算申請書テンプレート.xlsx にコピー（ファイル名変更）
-  - materials/06_code-generation/経費精算申請書_template.xlsx → src/data/templates/経費精算申請書テンプレート.xlsx にコピー（ファイル名変更）
-  - materials/06_code-generation/.gitignore → src/.gitignore にコピー
-  - materials/06_code-generation/.env.template → artifacts/06_code-generation/.env.template にコピー
-  - `artifacts/06_code-generation/src/data/output/` ディレクトリ（セッション別出力先、.gitkeep等で構造定義）
-  - `artifacts/06_code-generation/src/data/sessions/` ディレクトリ（セッション管理用、.gitkeep等で構造定義）
-  - `artifacts/06_code-generation/src/logs/` ディレクトリ（ログ出力先、.gitkeep等で構造定義）
+  - `prompt_transport.py`: `build_transport_prompt(applicant_name, application_date)` → 動的プロンプト生成関数
+    - application_date から3ヶ月前の deadline_date を計算
+    - `get_transportation_policies()` を読み込んでプロンプトに埋め込む
+  - `prompt_expense.py`: `build_expense_prompt(applicant_name, application_date)` → 動的プロンプト生成関数
+    - application_date から3ヶ月前の deadline_date を計算
+    - `get_receipt_policies()` を読み込んでプロンプトに埋め込む
 - **単体テスト内容**:
-  - 単体テスト不要（ファイル配置タスク）
+  - `build_transport_prompt()` が applicant_name・application_date・deadline_date を含む文字列を返すこと
+  - `build_expense_prompt()` が applicant_name・application_date・deadline_date を含む文字列を返すこと
+  - deadline_date が application_date から3ヶ月前であること
 
 ---
 
-## タスク15: 結合テスト
+## タスク11: 交通費計算ツール
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/05_detailed-design/outputs/交通費計算ツール詳細設計書.md
+  - artifacts/04_basic-design/outputs/データモデル基本設計.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/バリデーション方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/10_skeleton_tools.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/tools/transport_calculator.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_transport_calculator.py
+- **実装内容**:
+  - `TransportCalculator` クラス
+  - クラス変数: `_ROUTE_FARES: dict[tuple[str,str], int]`, `_FIXED_FARES: dict[str, int]`
+  - `_load_fare_data()` スタティックメソッド（train_routes.json・fixed_fares.json 読み込み、tuple[bool,str] 返却）
+  - `@tool` デコレータ付き `calculate_transport_fare(departure, destination, transport_type, travel_date)` クラスメソッド
+  - Pydantic `TransportCalculatorInput` でバリデーション
+  - 双方向経路検索・固定運賃参照・`{"success": bool, ...}` 形式の戻り値
+  - ファイルパスは `./data/fixed_fares.json` / `./data/train_fares.json`（materialsのコピー先に合わせる）
+- **単体テスト内容**:
+  - 電車: train_routes.json の運賃が返却されること
+  - バス・タクシー・飛行機: fixed_fares.json の運賃が返却されること
+  - 正常時に success=True・fare・data_source が返却されること
+  - 経路不存在で {"success": False, "message": ...} が返却されること
+  - departure 空文字で ValidationError が発生すること
+  - transport_type "自転車" で ValidationError が発生すること
+  - train_routes.json 不存在で {"success": False, "message": ...} が返却されること
+  - 駅名正規化（「新宿駅」→「新宿」）が機能すること
+
+---
+
+## タスク12: 申請書生成ツール
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/05_detailed-design/outputs/申請書生成ツール詳細設計書.md
+  - artifacts/04_basic-design/outputs/データモデル基本設計.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/バリデーション方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/10_skeleton_tools.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/tools/application_generator.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_application_generator.py
+- **実装内容**:
+  - `ApplicationGenerator` クラス
+  - `@tool(context=True)` デコレータ付き `generate_transport_application(business_purpose, segments, total_fare, tool_context)` メソッド
+  - `@tool(context=True)` デコレータ付き `generate_expense_application(business_purpose, items, total_amount, tool_context)` メソッド
+  - `_save_file(wb, file_path)` 内部メソッド（IOError/PermissionError/Exception処理、tuple[bool,str] 返却）
+  - `invocation_state` からの applicant_name・application_date・session_id 取得
+  - Pydantic `TransportApplicationInput`・`ExpenseApplicationInput` でバリデーション
+  - openpyxl によるテンプレート読み込み・セル書き込み（B3/B4/B5/A7+i〜G7+i/H7+n+2）
+  - `data/output/{session_id}/` への出力
+  - テンプレートパス: `data/templates/交通費精算申請書テンプレート.xlsx` / `data/templates/経費精算申請書テンプレート.xlsx`
+- **単体テスト内容**:
+  - 正常な交通費申請情報で Excel ファイルが生成されること
+  - H列（承認状況）に値が書き込まれていないこと
+  - A列に No（1始まり）が正しく書き込まれること
+  - 生成パスが `data/output/{session_id}/交通費精算申請_{timestamp}.xlsx` 形式であること
+  - テンプレート不存在で {"success": False, "message": ...} が返却されること
+  - business_purpose 空文字で ValidationError が発生すること
+  - segments 空リストで ValidationError が発生すること
+  - segments に必須キー欠落で不足キー名を含むエラーメッセージが返却されること
+  - IOError 発生時に _save_file が (False, エラーメッセージ) を返すこと
+
+---
+
+## タスク13: オーケストレーターエージェント
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md
+  - artifacts/03_system-design/outputs/マルチエージェント連携設計.md
+  - artifacts/03_system-design/outputs/セッション管理方針.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+  - artifacts/03_system-design/outputs/バリデーション方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/11_skeleton_orchestrator_agent.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/agents/orchestrator_agent.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_orchestrator_agent.py
+- **実装内容**:
+  - `Orchestrator` クラス
+  - `__init__(self, applicant_name: str)`: session_id生成（タイムスタンプ_UUID8形式）・application_date取得・Agent初期化（SlidingWindowConversationManager(window_size=30)・LoopControlHook・transport_agent/expense_agentツール）
+  - `run(self) -> None`: ウェルカムメッセージ・対話ループ・特殊コマンド処理・invocation_state生成・エラーハンドリング
+  - `_print_welcome()` 関数
+  - 例外処理: KeyboardInterrupt(break)・LoopLimitError(continue)・ContextWindowOverflowException(continue)・MaxTokensReachedException(continue)・RuntimeError(continue)・Exception(continue)
+  - 申請者名ログマスキング（"***"）
+- **単体テスト内容**:
+  - session_id が `タイムスタンプ_UUID8` 形式で生成されること
+  - invocation_state に applicant_name・application_date・session_id が設定されること
+  - "exit"/"quit" でループが終了すること
+  - "reset"/"リセット"/"最初から" で会話履歴がリセットされること
+  - 空入力で再入力促進メッセージが表示されること
+  - 501文字以上の入力で文字数制限メッセージが表示されること
+  - LoopLimitError 発生時に WARNING ログが出力されループが継続すること
+  - ログ出力に申請者名が含まれないこと（"***"でマスキング）
+
+---
+
+## タスク14: 交通費精算申請エージェント
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/05_detailed-design/outputs/AG-002_交通費精算申請エージェント詳細設計書.md
+  - artifacts/03_system-design/outputs/マルチエージェント連携設計.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/12_skeleton_specialist_agent.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/agents/transport_agent.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_transport_agent.py
+- **実装内容**:
+  - `_transport_agent_instances: dict[str, TransportAgent]` モジュールレベルキャッシュ
+  - `TransportAgent` クラス
+  - `__init__(self, applicant_name, application_date)`: `_build_prompt()` で動的プロンプト生成・Agent初期化（window_size=20・LoopControlHook・HumanApprovalHook(target_tool="generate_transport_application")・callback_handler=None）
+  - `_build_prompt(self, applicant_name, application_date)`: `build_transport_prompt()` を使用
+  - `__call__(self, query, invocation_state)`: `str(self._agent(...))` を返す
+  - `@tool(context=True)` 付き `transport_agent(query, tool_context)` 関数
+  - session_id をキーにキャッシュ・inner_state（session_id除外）を子エージェントへ渡す
+  - 例外処理: LoopLimitError/ContextWindowOverflowException/MaxTokensReachedException/RuntimeError/Exception を str で返す
+  - 申請者名ログマスキング（"***"）
+- **単体テスト内容**:
+  - 同一session_idで同一インスタンスが返されること（キャッシュ確認）
+  - 異なるsession_idで異なるインスタンスが生成されること
+  - inner_stateに session_id が含まれないこと
+  - LoopLimitError 発生時に str 型のエラーメッセージが返されること
+  - callback_handler=None が設定されること
+  - ログ出力に申請者名が含まれないこと（"***"でマスキング）
+
+---
+
+## タスク15: 経費精算申請エージェント
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/05_detailed-design/outputs/AG-003_経費精算申請エージェント詳細設計書.md
+  - artifacts/03_system-design/outputs/マルチエージェント連携設計.md
+  - artifacts/03_system-design/outputs/例外処理方針.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/12_skeleton_specialist_agent.md
+- **成果物のファイルパス**: artifacts/06_code-generation/src/agents/expense_agent.py
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_expense_agent.py
+- **実装内容**:
+  - `_expense_agent_instances: dict[str, ExpenseAgent]` モジュールレベルキャッシュ
+  - `ExpenseAgent` クラス
+  - `__init__(self, applicant_name, application_date)`: `_build_prompt()` で動的プロンプト生成・Agent初期化（window_size=15・LoopControlHook・HumanApprovalHook(target_tool="generate_expense_application")・callback_handler=None・image_reader ツール）
+  - `_build_prompt(self, applicant_name, application_date)`: `build_expense_prompt()` を使用
+  - `__call__(self, query, invocation_state)`: `str(self._agent(...))` を返す
+  - `@tool(context=True)` 付き `expense_agent(query, tool_context)` 関数
+  - session_id をキーにキャッシュ・inner_state（session_id除外）を子エージェントへ渡す
+  - 例外処理: LoopLimitError/ContextWindowOverflowException/MaxTokensReachedException/RuntimeError/Exception を str で返す
+  - 申請者名ログマスキング（"***"）
+- **単体テスト内容**:
+  - 同一session_idで同一インスタンスが返されること（キャッシュ確認）
+  - inner_stateに session_id が含まれないこと
+  - LoopLimitError 発生時に str 型のエラーメッセージが返されること
+  - callback_handler=None が設定されること
+  - ログ出力に申請者名が含まれないこと（"***"でマスキング）
+
+---
+
+## タスク16: エントリーポイント・プロジェクト設定
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - artifacts/03_system-design/outputs/システム基本情報.md
+  - artifacts/03_system-design/outputs/共通設定方針.md
+  - artifacts/05_detailed-design/outputs/AG-001_申請受付窓口エージェント詳細設計書.md（2.2.2 ウェルカムメッセージ・入力プロンプト）
+- **参照するスケルトンコード**: skills/templates/06_code-generation/02_skeleton_model_config.md（requirements参照）
+- **成果物のファイルパス**:
+  - artifacts/06_code-generation/src/main.py
+  - artifacts/06_code-generation/src/requirements.txt
+  - artifacts/06_code-generation/src/pytest.ini
+  - artifacts/06_code-generation/src/storage/__init__.py
+  - artifacts/06_code-generation/src/output/.gitkeep
+  - artifacts/06_code-generation/src/logs/.gitkeep
+  - 各ディレクトリの `__init__.py`
+- **単体テストコードのファイルパス**: artifacts/06_code-generation/src/tests/unit/test_main.py
+- **実装内容**:
+  - `main.py`:
+    - `load_dotenv()` 実行
+    - `warnings.filterwarnings("ignore")`
+    - logging 設定（フォーマット・ファイルハンドラ・Strandsイベントループ CRITICAL 抑制）
+    - アプリ起動時の申請者名入力（空欄不可）
+    - `TransportCalculator._load_fare_data()` 実行・失敗時にエラー表示して終了
+    - `Orchestrator(applicant_name).run()` 呼び出し
+  - `requirements.txt`: 規約 R6 の依存パッケージ（strands-agents, boto3, pydantic, openpyxl, python-dotenv, python-dateutil, pytest, pytest-cov, strands-agents-tools 等）
+  - `pytest.ini`: テストディレクトリ設定
+- **単体テスト内容**:
+  - 空欄の申請者名で再入力が促されること
+  - `TransportCalculator._load_fare_data()` 失敗時にエラーメッセージが表示されること
+
+---
+
+## タスク17: データファイル・資材コピー
+
+- **ステータス**: [x] 完了
+- **参照する設計書**:
+  - skills/prompts/06_code-generation/実装タスク計画.md（materialsフォルダの各ファイルの配置）
+  - skills/templates/06_code-generation/14_design_data_files.md
+- **参照するスケルトンコード**: skills/templates/06_code-generation/14_design_data_files.md
+- **成果物のファイルパス**:
+  - artifacts/06_code-generation/src/data/fixed_fares.json
+  - artifacts/06_code-generation/src/data/train_fares.json
+  - artifacts/06_code-generation/src/data/templates/交通費精算申請書テンプレート.xlsx
+  - artifacts/06_code-generation/src/data/templates/経費精算申請書テンプレート.xlsx
+  - artifacts/06_code-generation/src/.gitignore
+  - artifacts/06_code-generation/src/.env.template
+- **単体テストコードのファイルパス**: N/A（資材コピータスクのためテスト不要）
+- **実装内容**:
+  - `materials/06_code-generation/fixed_fares.json` → `artifacts/06_code-generation/src/data/fixed_fares.json`
+  - `materials/06_code-generation/train_fares.json` → `artifacts/06_code-generation/src/data/train_fares.json`
+  - `materials/06_code-generation/交通費申請書_template.xlsx` → `artifacts/06_code-generation/src/data/templates/交通費精算申請書テンプレート.xlsx`
+  - `materials/06_code-generation/経費精算申請書_template.xlsx` → `artifacts/06_code-generation/src/data/templates/経費精算申請書テンプレート.xlsx`
+  - `materials/06_code-generation/.gitignore` → `artifacts/06_code-generation/src/.gitignore`
+  - `materials/06_code-generation/.env.template` → `artifacts/06_code-generation/src/.env.template`
+- **単体テスト内容**: N/A
+
+---
+
+## タスク18: 結合テスト
 
 - **ステータス**: [x] 完了
 - **テスト対象**:
-  - AG-001 → AG-002 → TOOL-001 → TOOL-002 の連携フロー（交通費精算申請）
-  - AG-001 → AG-003 → TOOL-002 の連携フロー（経費精算申請）
-  - HumanApprovalHook によるTOOL-002実行前ブロック
-  - LoopControlHook による最大イテレーション制御
-  - load_fare_data() → calculate_travel_expense → generate_travel_expense_form の一連フロー
-  - invocation_state の各エージェントへの正しい伝播
-- **結合テストコードのファイルパス**: `artifacts/06_code-generation/src/tests/integration/test_agent_integration.py`
+  - TransportCalculator + ApplicationGenerator の連携（ツール間連携）
+  - Orchestrator → TransportAgent / ExpenseAgent の呼び出しフロー（Agent as Tools）
+  - ErrorHandler + LoopControlHook + HumanApprovalHook の協調動作
+  - invocation_state の AG-001 → AG-002/AG-003 への伝播
+- **結合テストコードのファイルパス**: artifacts/06_code-generation/src/tests/integration/test_application_flow.py
 - **結合テスト内容**:
-  - load_fare_data()が正常完了し、_train_fares/_fixed_faresに正しくデータが読み込まれること
-  - calculate_travel_expense()でDATA-011の既存経路（例: "渋谷"→"新宿"）の運賃が正しく返ること
-  - generate_travel_expense_form()で正常データから `data/output/{session_id}/交通費精算申請書_*.xlsx` が生成されること
-  - generate_expense_form()で正常データから `data/output/{session_id}/経費精算申請書_*.xlsx` が生成されること
-  - HumanApprovalHook: "ok"入力でTOOL-002が実行されること（モック標準入力使用）
-  - HumanApprovalHook: "キャンセル"入力でTOOL-002がキャンセルされ `event.cancel_tool` が設定されること
-  - LoopControlHook: max_iterations超過時にLoopLimitErrorが送出されること
-  - ErrorHandler: 各エラー種別のメッセージが正しく生成されること
-  - invocation_state: session_id, applicant_name, application_dateがTOOL-001・TOOL-002でToolContext経由で正しく取得できること
+  - Orchestrator 初期化時に session_id が正しく生成されること
+  - transport_agent ツール関数が LLM API モック環境で呼び出され、str 型の応答を返すこと
+  - expense_agent ツール関数が LLM API モック環境で呼び出され、str 型の応答を返すこと
+  - invocation_state の applicant_name・application_date・session_id が AG-002/AG-003 へ正しく伝播すること
+  - LoopLimitError 発生時に Orchestrator の対話ループが継続すること（break しないこと）
+  - TransportCalculator の _load_fare_data() 成功後に calculate_transport_fare が正しく動作すること
+  - ApplicationGenerator が指定セル位置に正しく書き込んだ Excel ファイルを生成すること

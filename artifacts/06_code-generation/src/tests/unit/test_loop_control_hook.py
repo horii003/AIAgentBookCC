@@ -1,98 +1,108 @@
-"""Unit tests for hooks/loop_control_hook.py"""
+"""loop_control_hook.py の単体テスト"""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from handlers.exceptions import LoopLimitError
-from hooks.loop_control_hook import LoopControlHook
+from handlers.loop_control_hook import LoopControlHook, LoopLimitError
 
 
-def _make_mock_event(cls_name: str, **kwargs):
-    """Create a mock event with the given attributes."""
-    mock = MagicMock()
+def _make_event(event_cls, **kwargs):
+    """テスト用イベントオブジェクトを生成する。"""
+    event = MagicMock(spec=event_cls)
     for k, v in kwargs.items():
-        setattr(mock, k, v)
-    return mock
+        setattr(event, k, v)
+    return event
 
 
-class TestLoopControlHookInit:
-    def test_default_max_iterations(self):
-        hook = LoopControlHook()
-        assert hook._max_iterations == 30
+class TestLoopLimitError:
+    def test_fields(self):
+        """LoopLimitError が正しいフィールドを保持すること"""
+        err = LoopLimitError(current_iteration=10, max_iterations=10, agent_name="AG-001")
+        assert err.current_iteration == 10
+        assert err.max_iterations == 10
+        assert err.agent_name == "AG-001"
 
-    def test_custom_max_iterations(self):
-        hook = LoopControlHook(max_iterations=5)
-        assert hook._max_iterations == 5
-
-    def test_default_agent_name(self):
-        hook = LoopControlHook()
-        assert hook._agent_name == ""
-
-    def test_custom_agent_name(self):
-        hook = LoopControlHook(agent_name="AG-001")
-        assert hook._agent_name == "AG-001"
-
-    def test_initial_iteration_count(self):
-        hook = LoopControlHook()
-        assert hook._iteration_count == 0
+    def test_message_contains_info(self):
+        """LoopLimitError のメッセージにエージェント名とループ回数が含まれること"""
+        err = LoopLimitError(current_iteration=5, max_iterations=10, agent_name="TestAgent")
+        msg = str(err)
+        assert "TestAgent" in msg
+        assert "10" in msg
 
 
-class TestRegisterHooks:
-    def test_register_hooks_adds_callbacks(self):
-        hook = LoopControlHook()
-        registry = MagicMock()
-        hook.register_hooks(registry)
-        assert registry.add_callback.call_count == 6
+class TestLoopControlHook:
+    def _make_hook(self, max_iterations=10, agent_name="TestAgent"):
+        return LoopControlHook(max_iterations=max_iterations, agent_name=agent_name)
 
+    def _fire_before_invocation(self, hook):
+        from strands.hooks import BeforeInvocationEvent
+        event = _make_event(BeforeInvocationEvent)
+        hook._before_invocation_handler(event)
 
-class TestOnBeforeInvocation:
-    def test_resets_counter(self):
-        hook = LoopControlHook()
-        hook._iteration_count = 10
-        event = _make_mock_event("BeforeInvocationEvent")
-        hook._on_before_invocation(event)
-        assert hook._iteration_count == 0
+    def _fire_after_model_call(self, hook, exception=None):
+        from strands.hooks import AfterModelCallEvent
+        event = _make_event(AfterModelCallEvent, exception=exception)
+        hook._after_model_call_handler(event)
 
+    def _fire_after_invocation(self, hook):
+        from strands.hooks import AfterInvocationEvent
+        event = _make_event(AfterInvocationEvent)
+        hook._after_invocation_handler(event)
 
-class TestOnAfterModelCall:
-    def test_increments_counter_when_no_exception(self):
-        hook = LoopControlHook(max_iterations=10)
-        event = _make_mock_event("AfterModelCallEvent", exception=None)
-        hook._on_after_model_call(event)
-        assert hook._iteration_count == 1
+    def test_before_invocation_resets_counter(self):
+        """BeforeInvocationEvent でカウンターが0にリセットされること"""
+        hook = self._make_hook()
+        hook._loop_count = 5
+        self._fire_before_invocation(hook)
+        assert hook._loop_count == 0
 
-    def test_skips_increment_when_exception_present(self):
-        hook = LoopControlHook(max_iterations=10)
-        event = _make_mock_event("AfterModelCallEvent", exception=Exception("err"))
-        hook._on_after_model_call(event)
-        assert hook._iteration_count == 0
+    def test_9_after_model_calls_no_error(self):
+        """max_iterations=10 で9回AfterModelCallEvent後に停止しないこと"""
+        hook = self._make_hook(max_iterations=10)
+        self._fire_before_invocation(hook)
+        for _ in range(9):
+            self._fire_after_model_call(hook)
+        assert hook._loop_count == 9
 
-    def test_raises_loop_limit_error_at_max(self):
-        hook = LoopControlHook(max_iterations=3, agent_name="test_agent")
-        event = _make_mock_event("AfterModelCallEvent", exception=None)
-        # Simulate 3 iterations reaching the limit
-        hook._iteration_count = 2
+    def test_10th_after_model_call_raises_loop_limit_error(self):
+        """max_iterations=10 で10回目に LoopLimitError が発生すること"""
+        hook = self._make_hook(max_iterations=10)
+        self._fire_before_invocation(hook)
+        for _ in range(9):
+            self._fire_after_model_call(hook)
         with pytest.raises(LoopLimitError) as exc_info:
-            hook._on_after_model_call(event)
-        err = exc_info.value
-        assert err.current_iteration == 3
-        assert err.max_iterations == 3
-        assert err.agent_name == "test_agent"
+            self._fire_after_model_call(hook)
+        assert exc_info.value.current_iteration == 10
+        assert exc_info.value.max_iterations == 10
 
-    def test_no_error_below_max(self):
-        hook = LoopControlHook(max_iterations=5)
-        event = _make_mock_event("AfterModelCallEvent", exception=None)
-        hook._iteration_count = 3
-        hook._on_after_model_call(event)  # Should not raise; count becomes 4
-        assert hook._iteration_count == 4
+    def test_max_iterations_1_raises_on_first_call(self):
+        """max_iterations=1 で1回目に LoopLimitError が発生すること"""
+        hook = self._make_hook(max_iterations=1)
+        self._fire_before_invocation(hook)
+        with pytest.raises(LoopLimitError):
+            self._fire_after_model_call(hook)
 
+    def test_after_invocation_does_not_reset_counter(self):
+        """AfterInvocationEvent でカウンターがリセットされないこと"""
+        hook = self._make_hook(max_iterations=10)
+        self._fire_before_invocation(hook)
+        for _ in range(3):
+            self._fire_after_model_call(hook)
+        self._fire_after_invocation(hook)
+        assert hook._loop_count == 3
 
-class TestOnAfterInvocation:
-    def test_logs_total_iterations(self):
-        hook = LoopControlHook()
-        hook._iteration_count = 7
-        event = _make_mock_event("AfterInvocationEvent")
-        with patch.object(hook._logger, "info") as mock_log:
-            hook._on_after_invocation(event)
-            mock_log.assert_called_once()
-            log_msg = mock_log.call_args[0][0]
-            assert "呼び出し完了" in log_msg or "total_iterations" in log_msg
+    def test_exception_in_event_skips_count(self):
+        """event.exception 存在時にカウントアップされないこと"""
+        hook = self._make_hook(max_iterations=10)
+        self._fire_before_invocation(hook)
+        self._fire_after_model_call(hook, exception=Exception("API error"))
+        assert hook._loop_count == 0
+
+    def test_before_invocation_resets_after_previous_run(self):
+        """再呼び出し時に前回のカウントがリセットされること"""
+        hook = self._make_hook(max_iterations=10)
+        self._fire_before_invocation(hook)
+        for _ in range(5):
+            self._fire_after_model_call(hook)
+        assert hook._loop_count == 5
+        self._fire_before_invocation(hook)
+        assert hook._loop_count == 0
