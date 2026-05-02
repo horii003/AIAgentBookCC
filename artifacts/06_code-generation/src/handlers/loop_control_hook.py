@@ -1,114 +1,76 @@
-"""ReActループ制御フック
+from __future__ import annotations
 
-エージェントのReActループの最大回数を制御し、
-ループの状態を表示するフック。
-"""
 import logging
 from typing import Any
 
-from strands.hooks import (
-    HookProvider,
-    HookRegistry,
-    BeforeInvocationEvent,
-    AfterModelCallEvent,
-    BeforeModelCallEvent,
-    AfterInvocationEvent,
-    BeforeToolCallEvent,
-    AfterToolCallEvent,
-)
-
-logger = logging.getLogger("handlers.loop_control_hook")
+logger = logging.getLogger(__name__)
 
 
-class LoopLimitError(Exception):
-    """ReActループ上限到達時に発生するカスタム例外。"""
+class LoopLimitError(RuntimeError):
+    """Raised when the agent's iteration count exceeds max_iterations."""
 
-    def __init__(self, current_iteration: int, max_iterations: int, agent_name: str) -> None:
+    def __init__(self, current_iteration: int, max_iterations: int, agent_name: str = "") -> None:
         self.current_iteration = current_iteration
         self.max_iterations = max_iterations
         self.agent_name = agent_name
         super().__init__(
-            f"ReActループの上限（{max_iterations}回）に達しました。"
-            f"エージェント: {agent_name}, 現在のループ回数: {current_iteration}"
+            f"ループ上限超過: {current_iteration}/{max_iterations} iterations (agent={agent_name!r})"
         )
 
 
-class LoopControlHook(HookProvider):
-    """ReActループ回数を監視し上限到達時にループを強制停止するフック。"""
+class LoopControlHook:
+    """Hook that limits the number of LLM call iterations per invocation."""
 
-    def __init__(self, max_iterations: int, agent_name: str) -> None:
-        self.max_iterations = max_iterations
-        self.agent_name = agent_name
-        self._loop_count: int = 0
+    def __init__(self, max_iterations: int = 10) -> None:
+        self._max_iterations = max_iterations
+        self._iteration_count = 0
 
-    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
-        """フックの登録"""
-        registry.add_callback(BeforeInvocationEvent, self._before_invocation_handler)
-        registry.add_callback(BeforeModelCallEvent, self._before_model_call_handler)
-        registry.add_callback(AfterModelCallEvent, self._after_model_call_handler)
-        registry.add_callback(BeforeToolCallEvent, self._before_tool_call_handler)
-        registry.add_callback(AfterToolCallEvent, self._after_tool_call_handler)
-        registry.add_callback(AfterInvocationEvent, self._after_invocation_handler)
+    def register_hooks(self, registry: Any, **kwargs: Any) -> None:
+        try:
+            from strands.hooks import (
+                AfterInvocationEvent,
+                AfterModelCallEvent,
+                AfterToolCallEvent,
+                BeforeInvocationEvent,
+                BeforeModelCallEvent,
+                BeforeToolCallEvent,
+            )
+            registry.add_callback(BeforeInvocationEvent, self.on_before_invocation)
+            registry.add_callback(BeforeModelCallEvent, self.on_before_model_call)
+            registry.add_callback(AfterModelCallEvent, self.on_after_model_call)
+            registry.add_callback(BeforeToolCallEvent, self.on_before_tool_call)
+            registry.add_callback(AfterToolCallEvent, self.on_after_tool_call)
+            registry.add_callback(AfterInvocationEvent, self.on_after_invocation)
+        except ImportError:
+            pass
 
-    def _before_invocation_handler(self, event: BeforeInvocationEvent) -> None:
-        """BeforeInvocationEvent ハンドラー: ループカウンタを 0 にリセットする。"""
-        self._loop_count = 0
-        logger.info(
-            f"エージェント呼び出し開始: ループカウンタをリセット"
-            f" (エージェント={self.agent_name}, 上限={self.max_iterations})"
-        )
+    def on_before_invocation(self, event: Any) -> None:
+        self._iteration_count = 0
+        logger.debug("[OPE-001] LoopControlHook: invocation開始, カウントリセット")
 
-    def _before_model_call_handler(self, event: BeforeModelCallEvent) -> None:
-        """BeforeModelCallEvent ハンドラー: ループ回数をINFOログ出力する。"""
-        logger.info(
-            f"LLM 呼び出し開始 (ループ={self._loop_count}, エージェント={self.agent_name})"
-        )
+    def on_before_model_call(self, event: Any) -> None:
+        self._iteration_count += 1
+        logger.debug("[OPE-001] LoopControlHook: model call %d/%d", self._iteration_count, self._max_iterations)
+        if self._iteration_count > self._max_iterations:
+            agent_name = ""
+            try:
+                agent_name = event.agent.name or ""
+            except AttributeError:
+                pass
+            raise LoopLimitError(self._iteration_count, self._max_iterations, agent_name)
 
-    def _after_model_call_handler(self, event: AfterModelCallEvent) -> None:
-        """AfterModelCallEvent ハンドラー: ループカウンタをインクリメントし上限監視する。"""
+    def on_after_model_call(self, event: Any) -> None:
         if getattr(event, "exception", None) is not None:
-            return
+            self._iteration_count -= 1
+            logger.debug("[OPE-001] LoopControlHook: model call例外のためカウントデクリメント -> %d", self._iteration_count)
 
-        self._loop_count += 1
-        logger.info(
-            f"LLM 呼び出し完了: ループ={self._loop_count}/{self.max_iterations}"
-            f" (エージェント={self.agent_name})"
-        )
-
-        if self._loop_count >= self.max_iterations:
-            logger.warning(
-                f"ループ上限に達しました"
-                f" (ループ={self._loop_count}, 上限={self.max_iterations},"
-                f" エージェント={self.agent_name})"
-            )
-            raise LoopLimitError(
-                current_iteration=self._loop_count,
-                max_iterations=self.max_iterations,
-                agent_name=self.agent_name,
-            )
-
-    def _before_tool_call_handler(self, event: BeforeToolCallEvent) -> None:
-        """BeforeToolCallEvent ハンドラー: ツール名をINFOログ出力する。"""
+    def on_before_tool_call(self, event: Any) -> None:
         tool_name = getattr(event, "tool_name", "unknown")
-        logger.info(
-            f"ツール呼び出し開始 (ツール名={tool_name}, エージェント={self.agent_name})"
-        )
+        logger.debug("[OPE-001] LoopControlHook: tool呼び出し開始: %s", tool_name)
 
-    def _after_tool_call_handler(self, event: AfterToolCallEvent) -> None:
-        """AfterToolCallEvent ハンドラー: ツール名をINFOログ出力する。"""
+    def on_after_tool_call(self, event: Any) -> None:
         tool_name = getattr(event, "tool_name", "unknown")
-        logger.info(
-            f"ツール呼び出し完了 (ツール名={tool_name}, エージェント={self.agent_name})"
-        )
+        logger.debug("[OPE-001] LoopControlHook: tool呼び出し完了: %s", tool_name)
 
-    def _after_invocation_handler(self, event: AfterInvocationEvent) -> None:
-        """AfterInvocationEvent ハンドラー: 合計ループ回数をINFOログ出力する（リセットは行わない）。"""
-        logger.info(
-            f"エージェント呼び出し完了: 合計ループ回数={self._loop_count}"
-            f" (エージェント={self.agent_name})"
-        )
-
-    @property
-    def loop_count(self) -> int:
-        """現在のループカウンタを返す。"""
-        return self._loop_count
+    def on_after_invocation(self, event: Any) -> None:
+        logger.debug("[OPE-001] LoopControlHook: invocation完了, 総反復数=%d", self._iteration_count)

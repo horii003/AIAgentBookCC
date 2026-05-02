@@ -1,5 +1,7 @@
 {
-  "bus": 220,
-  "taxi": 2000,
-  "airplane": 50000
+  "entries": [
+    {"transportation_type": "バス", "fare": 220},
+    {"transportation_type": "タクシー", "fare": 2000},
+    {"transportation_type": "飛行機", "fare": 50000}
+  ]
 }

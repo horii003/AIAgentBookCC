@@ -1,46 +1,57 @@
-"""prompt_expense.py の単体テスト"""
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from prompt.prompt_expense import build_expense_system_prompt
+from prompt.prompt_expense import get_expense_agent_system_prompt
 
 
-class TestBuildExpenseSystemPrompt:
-    def test_非空文字列を返す(self):
-        result = build_expense_system_prompt("2026-04-28")
+class TestPromptExpense:
+    def test_returns_non_empty_string(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_申請日が含まれる(self):
-        result = build_expense_system_prompt("2026-04-28")
-        assert "2026-04-28" in result
+    def test_embeds_application_date(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "2026-05-02" in result
 
-    def test_申請期限基準日が含まれる_3ヶ月前(self):
-        result = build_expense_system_prompt("2026-04-28")
-        assert "2026-01-28" in result
+    def test_computes_deadline_date(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "2026-02-01" in result
 
-    def test_申請期限基準日が含まれる_年またぎ(self):
-        result = build_expense_system_prompt("2026-01-15")
-        assert "2025-10-15" in result
+    def test_contains_brl14_rule(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "BRL-14" in result
 
-    def test_経費精算申請エージェントの役割が含まれる(self):
-        result = build_expense_system_prompt("2026-04-28")
-        assert "経費精算申請専門エージェント" in result
+    def test_contains_brl10_rule(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "BRL-10" in result
+        assert "5,000" in result
 
-    def test_業務ポリシーが含まれる(self):
-        result = build_expense_system_prompt("2026-04-28")
-        assert "BRL-18" in result or "申請期限" in result
-
-    def test_generate_expense_formが含まれる(self):
-        result = build_expense_system_prompt("2026-04-28")
-        assert "generate_expense_form" in result
-
-    def test_image_readerが含まれる(self):
-        result = build_expense_system_prompt("2026-04-28")
+    def test_contains_image_reader(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
         assert "image_reader" in result
 
-    def test_異なる申請日で正しい期限基準日(self):
-        result = build_expense_system_prompt("2025-06-01")
-        assert "2025-06-01" in result
-        assert "2025-03-01" in result
+    def test_contains_generate_form_tool(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "generate_expense_reimbursement_form" in result
+
+    def test_contains_brl17_expense_categories(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "BRL-17" in result
+        assert "事務用品費" in result
+        assert "宿泊費" in result
+        assert "資格精算費" in result
+
+    def test_contains_grd010_prohibition(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "GRD-010" in result
+
+    def test_different_dates_produce_different_prompts(self):
+        result1 = get_expense_agent_system_prompt("2026-05-02")
+        result2 = get_expense_agent_system_prompt("2026-06-01")
+        assert result1 != result2
+
+    def test_contains_policy_info(self):
+        result = get_expense_agent_system_prompt("2026-05-02")
+        assert "GRD-010" in result

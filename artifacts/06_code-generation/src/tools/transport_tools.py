@@ -1,163 +1,113 @@
-"""交通費計算ツール（TOOL-001）の実装
-
-出発地・目的地・交通手段・移動日から区間運賃を算出する。
-電車は template/train_routes.json を辞書キー検索、バス・タクシー・飛行機は
-template/fixed_fares.json の固定運賃を参照する。
-"""
 import json
 import logging
 import os
-from typing import Dict, Optional, Tuple
 
 from pydantic import ValidationError
-from strands import tool, ToolContext
+from strands import tool
+from strands.types.tools import ToolContext
 
+from config.settings import FIXED_FARES_PATH, TRAIN_ROUTES_PATH
 from handlers.error_handler import ErrorHandler
-from models.data_models import TransportExpenseCalculatorInput
+from models.data_models import FixedFareMaster, TrainRouteMaster, TransportToolInput
 
-_logger = logging.getLogger(__name__)
-_error_handler = ErrorHandler()
-
-_TRAIN_ROUTES_PATH = "data/templates/train_routes.json"
-_FIXED_FARES_PATH = "data/templates/fixed_fares.json"
+logger = logging.getLogger(__name__)
+error_handler = ErrorHandler()
 
 
-class FareDataLoader:
-    """運賃データの読み込みを担当するクラス"""
-
-    def __init__(self) -> None:
-        self.train_routes_data: Dict[str, int] = {}
-        self.fixed_fares_data: Dict[str, int] = {}
-
-    def load_train_routes(self) -> Tuple[bool, str]:
-        """template/train_routes.json を読み込み、辞書形式でメモリに保持する"""
-        if not os.path.exists(_TRAIN_ROUTES_PATH):
-            _logger.warning("[TL-001] 運賃データファイル未存在: file_path=%s", _TRAIN_ROUTES_PATH)
-            return False, "申し訳ありません。運賃データファイルが見つかりません。"
-        try:
-            with open(_TRAIN_ROUTES_PATH, encoding="utf-8") as f:
-                raw = json.load(f)
-            if isinstance(raw, dict) and "routes" in raw:
-                self.train_routes_data = {
-                    f"{r['departure']}_{r['destination']}": int(r["fare"])
-                    for r in raw["routes"]
-                }
-            else:
-                self.train_routes_data = {k: int(v) for k, v in raw.items()}
-            return True, ""
-        except json.JSONDecodeError as exc:
-            _logger.warning("[TL-001] 運賃データ読み込みエラー（JSONDecodeError）: %s", exc)
-            return False, "申し訳ありません。運賃データファイルの形式が不正です。システム管理者にご連絡ください。"
-        except Exception as exc:
-            _logger.warning("[TL-001] 運賃データ読み込みエラー: %s", exc)
-            return False, _error_handler.handle_fare_data_error(exc)
-
-    def load_fixed_fares(self) -> Tuple[bool, str]:
-        """template/fixed_fares.json を読み込み、辞書形式でメモリに保持する"""
-        if not os.path.exists(_FIXED_FARES_PATH):
-            _logger.warning("[TL-001] 運賃データファイル未存在: file_path=%s", _FIXED_FARES_PATH)
-            return False, "申し訳ありません。運賃データファイルが見つかりません。"
-        try:
-            with open(_FIXED_FARES_PATH, encoding="utf-8") as f:
-                raw: Dict[str, int] = json.load(f)
-            self.fixed_fares_data = {k: int(v) for k, v in raw.items()}
-            return True, ""
-        except json.JSONDecodeError as exc:
-            _logger.warning("[TL-001] 固定運賃データ読み込みエラー（JSONDecodeError）: %s", exc)
-            return False, "申し訳ありません。固定運賃データファイルの形式が不正です。システム管理者にご連絡ください。"
-        except Exception as exc:
-            _logger.warning("[TL-001] 固定運賃データ読み込みエラー: %s", exc)
-            return False, _error_handler.handle_fare_data_error(exc)
+def _load_train_routes() -> TrainRouteMaster:
+    with open(TRAIN_ROUTES_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    return TrainRouteMaster.model_validate(data)
 
 
-# モジュールレベルのシングルトン（アプリ起動時に1回だけ読み込む）
-_fare_loader = FareDataLoader()
-_fare_loader.load_train_routes()
-_fare_loader.load_fixed_fares()
+def _load_fixed_fares() -> FixedFareMaster:
+    with open(FIXED_FARES_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    return FixedFareMaster.model_validate(data)
 
 
 @tool(context=True)
-def calculate_transport_expense(
+def calculate_transport_fare(
     tool_context: ToolContext,
-    transport_date: str,
     departure: str,
     destination: str,
-    transport_type: str,
+    transportation_type: str,
+    travel_date: str,
+    purpose: str,
 ) -> dict:
-    """1区間分の移動情報（移動日・出発地・目的地・交通手段）から区間運賃（円）を算出する。
+    """移動区間の交通費を算出する。
 
-    電車の場合は template/train_routes.json の経路辞書をキー検索し、バス・タクシー・飛行機は
-    template/fixed_fares.json の固定運賃辞書をキー検索する。経路が見つからない場合は success=False を返す。
-    申請者名・申請日はツール関数内部で invocation_state から取得する（LLMがパラメータとして渡さない）。
+    電車の場合は train_routes.json の経路テーブルから出発地・目的地の組み合わせを双方向検索し、
+    バス・タクシー・飛行機の場合は fixed_fares.json の固定運賃テーブルから取得する。
+    算出根拠（参照テーブル・エントリの要約）を result["calculation_basis"] として返す。
 
     Args:
-        transport_date (str): 移動日（YYYY-MM-DD形式）。申請期限チェック（BRL-13）に使用。
-        departure (str): 出発地（正規化済み駅名・地名）。
-        destination (str): 目的地（正規化済み駅名・地名）。
-        transport_type (str): 交通手段。「電車」「バス」「タクシー」「飛行機」または英語表記・別表記
-            （例: "train" → "電車", "taxi" → "タクシー"）を正規化して受け入れる。
+        departure: 出発地（駅名または地点名）。「駅」「Station」等の接尾語は自動除去される。
+        destination: 目的地（駅名または地点名）。「駅」「Station」等の接尾語は自動除去される。
+        transportation_type: 交通手段。「電車」「バス」「タクシー」「飛行機」のいずれか。
+        travel_date: 移動日（YYYY-MM-DD形式）。
+        purpose: 業務目的（空文字不可）。
 
     Returns:
-        dict: {
-            "success": bool,
-            "fare": int,              # 成功時: 区間運賃（円）
-            "calculation_basis": str, # 成功時: 計算根拠
-            "message": str            # 失敗時: ユーザー向けエラーメッセージ
-        }
+        dict with keys: success, fare, calculation_basis, message
     """
-    _logger.info(
-        "[TL-001] calculate_transport_expense 開始: departure=%s, destination=%s, "
-        "transport_type=%s, transport_date=%s",
-        departure, destination, transport_type, transport_date,
+    logger.info(
+        f"[OPE-002] calculate_transport_fare 開始: departure={departure}, destination={destination}, "
+        f"transportation_type={transportation_type}, travel_date={travel_date}"
     )
 
     try:
-        validated = TransportExpenseCalculatorInput(
-            transport_date=transport_date,
+        validated = TransportToolInput(
             departure=departure,
             destination=destination,
-            transport_type=transport_type,
+            transportation_type=transportation_type,
+            travel_date=travel_date,
+            purpose=purpose,
         )
-    except ValidationError as exc:
-        _logger.error("[TL-001] 入力バリデーションエラー: %s", exc)
-        return {"success": False, "message": _error_handler.handle_validation_error(exc)}
+    except ValidationError as e:
+        return {"success": False, "fare": 0, "calculation_basis": "", "message": error_handler.handle_validation_error(e)}
 
-    try:
-        result = _calculate(
-            validated.transport_type,
-            validated.departure,
-            validated.destination,
-        )
-        _logger.info(
-            "[TL-001] calculate_transport_expense 完了: fare=%s, basis=%s",
-            result.get("fare"),
-            result.get("calculation_basis"),
-        )
-        return result
-    except Exception as exc:
-        _logger.error("[TL-001] 運賃計算エラー: %s", exc, exc_info=True)
-        return {"success": False, "message": _error_handler.handle_calculation_error(exc)}
+    dep = validated.departure
+    dst = validated.destination
+    t_type = validated.transportation_type
 
+    if t_type == "電車":
+        if not os.path.exists(TRAIN_ROUTES_PATH):
+            logger.error(f"[ERR-004] ファイル参照失敗: {TRAIN_ROUTES_PATH}")
+            return {"success": False, "fare": 0, "calculation_basis": "", "message": error_handler.handle_fare_data_error(Exception(f"ファイル不在: {TRAIN_ROUTES_PATH}"))}
+        try:
+            master = _load_train_routes()
+        except (json.JSONDecodeError, ValidationError, Exception) as e:
+            logger.error(f"[ERR-006] テーブルファイル不正: {TRAIN_ROUTES_PATH} - {e}")
+            return {"success": False, "fare": 0, "calculation_basis": "", "message": "申し訳ありません。運賃テーブルのデータに問題が発生しました。担当部門（管理部）にお問い合わせください。"}
 
-def _calculate(transport_type: str, departure: str, destination: str) -> dict:
-    """交通手段に応じた運賃計算を行う内部関数"""
-    if transport_type == "電車":
-        key = f"{departure}_{destination}"
-        fare = _fare_loader.train_routes_data.get(key)
-        if fare is None:
-            _logger.warning(
-                "[TL-001] 電車経路未発見: departure=%s, destination=%s", departure, destination
-            )
-            return {
-                "success": False,
-                "message": "申し訳ありません。指定された経路の運賃データが見つかりませんでした。交通費を手動で入力してください。",
-            }
-        return {"success": True, "fare": fare, "calculation_basis": "電車経路テーブル参照"}
+        for entry in master.routes:
+            if (entry.departure == dep and entry.destination == dst) or \
+               (entry.departure == dst and entry.destination == dep):
+                fare = entry.fare
+                calculation_basis = f"電車経路テーブル（train_routes.json）より: {dep}→{dst} {fare}円"
+                logger.info(f"[OPE-002] calculate_transport_fare 完了: fare={fare}, calculation_basis={calculation_basis}")
+                return {"success": True, "fare": fare, "calculation_basis": calculation_basis, "message": ""}
+
+        logger.warning(f"[ERR-002] 経路不明: {dep}→{dst} ({t_type})")
+        return {"success": False, "fare": 0, "calculation_basis": "", "message": error_handler.handle_calculation_error(ValueError(f"経路不明: {dep}→{dst}"))}
+
     else:
-        fare = _fare_loader.fixed_fares_data.get(transport_type)
-        if fare is None:
-            return {
-                "success": False,
-                "message": f"申し訳ありません。「{transport_type}」の固定運賃データが見つかりませんでした。交通費を手動で入力してください。",
-            }
-        return {"success": True, "fare": fare, "calculation_basis": "固定運賃参照"}
+        if not os.path.exists(FIXED_FARES_PATH):
+            logger.error(f"[ERR-004] ファイル参照失敗: {FIXED_FARES_PATH}")
+            return {"success": False, "fare": 0, "calculation_basis": "", "message": error_handler.handle_fare_data_error(Exception(f"ファイル不在: {FIXED_FARES_PATH}"))}
+        try:
+            master = _load_fixed_fares()
+        except (json.JSONDecodeError, ValidationError, Exception) as e:
+            logger.error(f"[ERR-006] テーブルファイル不正: {FIXED_FARES_PATH} - {e}")
+            return {"success": False, "fare": 0, "calculation_basis": "", "message": "申し訳ありません。運賃テーブルのデータに問題が発生しました。担当部門（管理部）にお問い合わせください。"}
+
+        for entry in master.entries:
+            if entry.transportation_type == t_type:
+                fare = entry.fare
+                calculation_basis = f"固定運賃テーブル（fixed_fares.json）より: {t_type} {fare}円"
+                logger.info(f"[OPE-002] calculate_transport_fare 完了: fare={fare}, calculation_basis={calculation_basis}")
+                return {"success": True, "fare": fare, "calculation_basis": calculation_basis, "message": ""}
+
+        logger.warning(f"[ERR-002] 経路不明: {dep}→{dst} ({t_type})")
+        return {"success": False, "fare": 0, "calculation_basis": "", "message": error_handler.handle_calculation_error(ValueError(f"交通手段不明: {t_type}"))}
