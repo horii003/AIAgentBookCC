@@ -1,124 +1,62 @@
+# 参照: DD-02a 申請受付窓口エージェント詳細設計書, SD-06 共通設定方針
+"""main.py の単体テスト"""
 import sys
 import os
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from unittest.mock import MagicMock, patch
-import importlib
 
+class TestMain:
+    """main.py の単体テスト"""
 
-class TestMainModule:
-    def test_import_ok(self):
-        import main
-        assert callable(main.main)
+    def test_main_calls_orchestrator_agent(self):
+        """main()がOrchestratorAgentを生成してrun()を呼び出すこと。"""
+        mock_agent_instance = MagicMock()
+        mock_orchestrator_class = MagicMock(return_value=mock_agent_instance)
 
-    def test_get_applicant_name_returns_stripped_input(self):
-        import main
-        with patch("builtins.input", return_value="  田中太郎  "):
-            name = main._get_applicant_name()
-        assert name == "田中太郎"
+        with patch("sys.argv", ["main.py", "山田太郎"]):
+            with patch.dict("sys.modules", {
+                "agents.orchestrator_agent": MagicMock(OrchestratorAgent=mock_orchestrator_class),
+            }):
+                if "main" in sys.modules:
+                    del sys.modules["main"]
+                import main as m
+                m.main()
 
-    def test_get_applicant_name_retries_on_empty(self):
-        import main
-        with patch("builtins.input", side_effect=["", "田中太郎"]):
-            name = main._get_applicant_name()
-        assert name == "田中太郎"
+        mock_orchestrator_class.assert_called_once_with(applicant_name="山田太郎")
+        mock_agent_instance.run.assert_called_once()
 
-    def test_main_quit_exits_cleanly(self):
-        import main
-        mock_agent = MagicMock(return_value="response")
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.return_value = "sess1"
+    def test_main_without_args_uses_input(self, monkeypatch):
+        """main()が引数なしの場合input()で申請者名を取得すること。"""
+        mock_agent_instance = MagicMock()
+        mock_orchestrator_class = MagicMock(return_value=mock_agent_instance)
 
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=["田中太郎", "quit"]), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
+        monkeypatch.setattr("builtins.input", lambda _: "鈴木花子")
 
-        mock_agent.assert_not_called()
+        with patch("sys.argv", ["main.py"]):
+            with patch.dict("sys.modules", {
+                "agents.orchestrator_agent": MagicMock(OrchestratorAgent=mock_orchestrator_class),
+            }):
+                if "main" in sys.modules:
+                    del sys.modules["main"]
+                import main as m
+                m.main()
 
-    def test_main_empty_input_skips_agent(self):
-        import main
-        mock_agent = MagicMock(return_value="response")
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.return_value = "sess1"
+        mock_orchestrator_class.assert_called_once_with(applicant_name="鈴木花子")
 
-        inputs = ["田中太郎", "", "quit"]
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
+    def test_main_empty_applicant_name_exits(self, monkeypatch):
+        """main()で申請者名が空の場合に終了すること。"""
+        monkeypatch.setattr("builtins.input", lambda _: "")
 
-        mock_agent.assert_not_called()
-
-    def test_main_oversized_input_skips_agent(self):
-        import main
-        mock_agent = MagicMock(return_value="response")
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.return_value = "sess1"
-
-        long_input = "あ" * 501
-        inputs = ["田中太郎", long_input, "quit"]
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
-
-        mock_agent.assert_not_called()
-
-    def test_main_valid_input_calls_agent(self):
-        import main
-        mock_agent = MagicMock(return_value="申請を受け付けました")
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.return_value = "sess1"
-
-        inputs = ["田中太郎", "電車で渋谷から新宿", "quit"]
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
-
-        mock_agent.assert_called_once()
-
-    def test_main_reset_command_creates_new_session(self):
-        import main
-        mock_agent = MagicMock(return_value="response")
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.side_effect = ["sess1", "sess2"]
-
-        inputs = ["田中太郎", "reset", "鈴木花子", "quit"]
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
-
-        assert mock_session_manager.create_session.call_count == 2
-
-    def test_main_agent_exception_handled(self):
-        import main
-        mock_agent = MagicMock(side_effect=Exception("unexpected"))
-        mock_session_manager = MagicMock()
-        mock_session_manager.create_session.return_value = "sess1"
-
-        inputs = ["田中太郎", "電車で出張", "quit"]
-        with patch("main.patch_human_approval_hook"), \
-             patch("main.create_orchestrator_agent", return_value=mock_agent), \
-             patch("main.SessionManagerFactory") as mock_factory, \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
-            mock_factory.create.return_value = mock_session_manager
-            main.main()
+        with patch("sys.argv", ["main.py"]):
+            with patch.dict("sys.modules", {
+                "agents.orchestrator_agent": MagicMock(),
+            }):
+                if "main" in sys.modules:
+                    del sys.modules["main"]
+                import main as m
+                # 空文字の場合はOrchestratorAgentが生成されずに終了する
+                m.main()  # 例外が発生しないこと

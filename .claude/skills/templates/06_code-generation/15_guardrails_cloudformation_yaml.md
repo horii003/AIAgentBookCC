@@ -1,4 +1,4 @@
-# スケルトン: ガードレール (config/guardrails_cloudformation.yaml)
+# スケルトン: ガードレール (guardrails/guardrails_cloudformation.yaml)
 
 
 ## 概要
@@ -8,7 +8,7 @@ AWS Bedrockのguardrailsにガードレールを設定するためのCloudFormat
 
 ## ファイル配置
 
-`config/guardrails_cloudformation.yaml`
+`guardrails/guardrails_cloudformation.yaml`
 
 ---
 

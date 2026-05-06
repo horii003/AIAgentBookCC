@@ -1,4 +1,4 @@
-# スケルトン: ReActループ制御フック (handlers/loop_control_hook.py)
+# スケルトン: ReActループ制御フック (hooks/loop_control_hook.py)
 
 ## 概要
 
@@ -7,7 +7,7 @@
 
 ## ファイル配置
 
-`handlers/loop_control_hook.py`
+`hooks/loop_control_hook.py`
 
 ## スケルトンコード
 

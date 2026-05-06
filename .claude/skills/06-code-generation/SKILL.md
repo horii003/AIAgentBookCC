@@ -33,7 +33,8 @@ Strands Agents SDKのAIエージェント開発ワークフローにおけるコ
 |---|---|---|---|---|---|
 | 1 | 実装タスク計画 | IG-01 | `prompts/06_code-generation/実装タスク計画.md` | なし | `../artifacts/06_code-generation/outputs/tasks.md` |
 | 2 | コード生成実行 | IG-02 | `prompts/06_code-generation/コード生成実行.md` | 下記スケルトン参照 | `../artifacts/06_code-generation/src/` |
-| 3 | 評価テスト生成 | IG-03 | `prompts/06_code-generation/16_eval_test.md` | `templates/06_code-generation/16_eval_test.md` | `evals/eval_{evaluation_name}.py` |
+
+> **注意**: 評価テスト（`evals/eval_{evaluation_name}.py`）は IG-01 のタスク計画段階で tasks.md に組み込み、IG-02 のコード生成の流れで生成する。スケルトン16番・prompt `16_eval_test.md` を使用する。
 
 ### コード生成で使用するスケルトンテンプレート
 
@@ -44,8 +45,8 @@ Strands Agents SDKのAIエージェント開発ワークフローにおけるコ
 | 01 | `templates/06_code-generation/01_skeleton_data_models.md` | `models/data_models.py` |
 | 02 | `templates/06_code-generation/02_skeleton_model_config.md` | `config/model_config.py` |
 | 03 | `templates/06_code-generation/03_skeleton_error_handler.md` | `handlers/error_handler.py` |
-| 04 | `templates/06_code-generation/04_skeleton_loop_control_hook.md` | `handlers/loop_control_hook.py` |
-| 05 | `templates/06_code-generation/05_skeleton_human_approval_hook.md` | `handlers/human_approval_hook.py` |
+| 04 | `templates/06_code-generation/04_skeleton_loop_control_hook.md` | `hooks/loop_control_hook.py` |
+| 05 | `templates/06_code-generation/05_skeleton_human_approval_hook.md` | `hooks/human_approval_hook.py` |
 | 06 | `templates/06_code-generation/06_skeleton_session_manager.md` | `session/session_manager.py` |
 | 07 | `templates/06_code-generation/07_skeleton_prompt_orchestrator.md` | `prompt/prompt_orchestrator.py` |
 | 08 | `templates/06_code-generation/08_skeleton_prompt_specialist.md` | `prompt/prompt_{specialist}.py` |
@@ -55,16 +56,15 @@ Strands Agents SDKのAIエージェント開発ワークフローにおけるコ
 | 12 | `templates/06_code-generation/12_skeleton_specialist_agent.md` | `agents/{specialist}_agent.py` |
 | 13 | `templates/06_code-generation/13_skeleton_main.md` | `main.py` |
 | 14 | `templates/06_code-generation/14_design_data_files.md` | `data/*.json` |
-| 15 | `templates/06_code-generation/15_guardrails_cloudformation_yaml.md` | `config/guardrails_cloudformation.yaml` |
+| 15 | `templates/06_code-generation/15_guardrails_cloudformation_yaml.md` | `guardrails/guardrails_cloudformation.yaml` |
 | 16 | `templates/06_code-generation/16_eval_test.md` | `evals/eval_{evaluation_name}.py` |
 
 ### 依存関係
 
 | 成果物 | 依存する成果物ID |
 |---|---|
-| IG-01 | BD-02, BD-05, SD-01〜SD-07, DD-01〜DD-03 |
-| IG-02 | IG-01 |
-| IG-03 | eval_common_system_design.md, eval_{evaluation_name}_design.md |
+| IG-01 | BD-02, BD-05, SD-01〜SD-07, DD-01〜DD-05 |
+| IG-02 | IG-01（評価テストタスクを含む） |
 
 ---
 
@@ -79,6 +79,10 @@ Strands Agents SDKのAIエージェント開発ワークフローにおけるコ
 
 ### 2. 出力ルール
 - ソースコードを出力する際には元となる設計書から実装意図がわかるようにコメントを記述する
+  - ファイル冒頭: 参照した設計書のIDと成果物名（例: `# 参照: DD-01 ツール詳細設計書`）
+  - クラス・関数のdocstring: 設計書の「概要」「責務」「制約」を記載
+  - 処理分岐・バリデーション箇所: 設計書の対応するルール・条件を直前にコメント
+  - 設計書に定義された定数・閾値: 設計書の記述を値の直前に引用
 - すべてのコメント・docstring は日本語で記述する
 - 識別子（変数名・関数名・クラス名）は英語（R7準拠）
 - 実装対象外の未定義項目を推測・補完してはならない
@@ -121,6 +125,18 @@ tasks.md の内容：
 - 各コンポーネントの実装概要
 - 依存関係（どのコンポーネントを先に実装するか）
 
+#### 評価テストタスクの追加（必須）
+
+tasks.md の全実装タスクの後（結合テストタスクの前）に、以下の指示に従って評価テストタスクを追加する。
+
+1. `prompts/06_code-generation/16_eval_test.md` を読み込む
+2. `artifacts/05_detailed-design/outputs/評価テスト詳細設計.md` を読み込む
+3. 設計書に記載されている評価スクリプト（`eval_{evaluation_name}.py`）ごとに1タスクを追加する
+   - 参照する設計書: `artifacts/05_detailed-design/outputs/評価テスト詳細設計.md`
+   - 参照するスケルトンコード: `templates/06_code-generation/16_eval_test.md`
+   - 成果物のファイルパス: `artifacts/06_code-generation/src/evals/eval_{evaluation_name}.py`
+   - 実装内容: promptファイル `16_eval_test.md` の Step 1〜4 を適用して生成する内容
+
 ### Step 5: コード生成実行（IG-02）
 
 `prompts/06_code-generation/コード生成実行.md` の指示に従い、tasks.md の計画順にコードを生成する。
@@ -130,6 +146,8 @@ tasks.md の内容：
 2. 詳細設計書の内容をスケルトンに当てはめてコードを生成する
 3. `00_rule_directory_structure.md`（R1）に従ってファイルを配置する
 4. `00_rule_project_conventions.md`（R7・R8・R9）に準拠していることを確認する
+
+評価テストタスクに到達したら、`prompts/06_code-generation/16_eval_test.md` の Step 1〜4 の手順に従って `evals/eval_{evaluation_name}.py` を生成する。
 
 ### Step 6: workflow-state.md を「完了」に更新
 

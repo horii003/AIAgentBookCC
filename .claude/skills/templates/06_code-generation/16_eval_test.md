@@ -11,8 +11,7 @@ updated_by: ""
 LLM-as-Judge 方式でエージェントの品質を自動評価するスクリプトのテンプレートです。エージェントの実行軌跡（trajectory）を参照し、二値スコア（Yes=1.0 / No=0.0）で判定します。マルチターン評価（ゴール達成率）とシングルターン評価（ツール選択精度）の2タイプを提供します。
 
 > **参照元（評価設計資料）:**
-> - `evals/eval_common_system_design.md` - 評価テスト共通設計
-> - `evals/eval_{evaluation_name}_design.md` - 評価詳細設計
+> - `artifacts/05_detailed-design/outputs/評価テスト詳細設計.md` - 評価詳細設計
 
 ## ファイル配置
 

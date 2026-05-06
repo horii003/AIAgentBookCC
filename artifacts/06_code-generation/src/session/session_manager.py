@@ -1,105 +1,147 @@
-from __future__ import annotations
+# 参照: BD-05 セッション管理基本設計書, SD-03 セッション管理方針
+"""セッション管理機能
 
-import json
+申請フローの進捗状態（業務コンテキスト・フロー進捗・成果物参照）をセッション単位で
+JSONファイルに永続化する。Strands AgentsのFileSessionManagerをラップして利用する。
+セッション再開（resume）時にセッション状態ファイルから進捗を復元し、申請フローを継続できる。
+"""
 import os
 import uuid
+import json
+import logging
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+try:
+    from strands.session.file_session_manager import FileSessionManager
+    _STRANDS_AVAILABLE = True
+except ImportError:
+    _STRANDS_AVAILABLE = False
+    # strands未インストール環境向けスタブ
+    class FileSessionManager:
+        def __init__(self, session_id: str, storage_path: str):
+            self.session_id = session_id
+            self.storage_path = storage_path
 
 
-class SessionState(str, Enum):
-    CREATED = "CREATED"
-    ACTIVE = "ACTIVE"
-    WAITING = "WAITING"
-    CLOSED = "CLOSED"
-    TERMINATED = "TERMINATED"
+class SessionManager:
+    """セッション状態ファイル（data/sessions/{session_id}.json）の読み書き・生成・削除を担うクラス。
 
+    責務: 全エージェント（AG-001〜AG-003）が共通して使用するセッション管理機能を提供する。
+    制約:
+      - セッション状態の保存はファイルベース（JSON）のみ
+      - CLOSED/TERMINATED時にセッション状態ファイルを削除する（機微情報保護）
+      - session_idはLLMのプロンプトに含めない。invocation_state経由のみで受け渡す
+    """
 
-class SessionData:
-    def __init__(
-        self,
-        session_id: str,
-        status: SessionState,
-        applicant_name: str,
-        application_date: str,
-        created_at: str,
-        updated_at: str,
-    ) -> None:
+    # R10: セッション保存先（プロジェクトルートからの相対パス）
+    DEFAULT_STORAGE_PATH = "data/sessions/"
+
+    def __init__(self, session_id: str, storage_path: str = DEFAULT_STORAGE_PATH):
+        """
+        Args:
+            session_id: セッション識別子
+            storage_path: セッション状態ファイルの保存先ディレクトリ
+        """
         self.session_id = session_id
-        self.status = status
-        self.applicant_name = applicant_name
-        self.application_date = application_date
-        self.created_at = created_at
-        self.updated_at = updated_at
+        self.storage_path = storage_path
+        # ストレージディレクトリを自動作成する
+        Path(storage_path).mkdir(parents=True, exist_ok=True)
+        self._session_file_path = os.path.join(storage_path, f"{session_id}.json")
 
-    def to_dict(self) -> dict:
-        return {
+        # Strands AgentsのFileSessionManagerインスタンス（Agentに渡す用）
+        if _STRANDS_AVAILABLE:
+            self._file_session_manager = FileSessionManager(
+                session_id=session_id,
+                storage_path=storage_path,
+            )
+        else:
+            self._file_session_manager = None
+
+        logger.debug(
+            "SessionManager initialized: session_id=%s, storage_path=%s",
+            session_id,
+            storage_path,
+        )
+
+    @property
+    def file_session_manager(self):
+        """Strands AgentsのFileSessionManagerインスタンスを返す（Agentのsession_managerパラメータに渡す用）。"""
+        return self._file_session_manager
+
+    def create_session(self) -> None:
+        """初期状態でセッション状態ファイルを作成する。
+
+        session_statusをCREATEDで初期化してJSONファイルを作成する。
+        """
+        initial_state = {
             "session_id": self.session_id,
-            "status": self.status.value,
-            "applicant_name": self.applicant_name,
-            "application_date": self.application_date,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            "session_status": "CREATED",
+            "created_at": datetime.now().isoformat(),
         }
+        self.save_session(initial_state)
+        logger.info("Session created: session_id=%s", self.session_id)
 
-    @classmethod
-    def from_dict(cls, data: dict) -> SessionData:
-        return cls(
-            session_id=data["session_id"],
-            status=SessionState(data["status"]),
-            applicant_name=data.get("applicant_name", ""),
-            application_date=data.get("application_date", ""),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
-        )
+    def load_session(self) -> dict | None:
+        """セッション状態ファイルを読み込みdict返却する。
 
-
-class FileBasedSessionManager:
-    def __init__(self, storage_path: str = "data/sessions") -> None:
-        self._storage_path = storage_path
-        os.makedirs(storage_path, exist_ok=True)
-
-    def _session_file(self, session_id: str) -> str:
-        return os.path.join(self._storage_path, f"{session_id}.json")
-
-    def create_session(self, applicant_name: str, application_date: str) -> str:
-        now = datetime.now()
-        date_part = now.strftime("%Y%m%d")
-        time_part = now.strftime("%H%M%S")
-        uid = uuid.uuid4().hex[:8]
-        session_id = f"{date_part}_{time_part}_{uid}"
-
-        data = SessionData(
-            session_id=session_id,
-            status=SessionState.CREATED,
-            applicant_name=applicant_name,
-            application_date=application_date,
-            created_at=now.isoformat(),
-            updated_at=now.isoformat(),
-        )
-        with open(self._session_file(session_id), "w", encoding="utf-8") as f:
-            json.dump(data.to_dict(), f, ensure_ascii=False, indent=2)
-        return session_id
-
-    def get_session(self, session_id: str) -> Optional[SessionData]:
-        path = self._session_file(session_id)
-        if not os.path.exists(path):
+        Returns:
+            セッション状態辞書（dict）またはNone（ファイル不存在時）
+            例外を発生させない設計とする（BDサ:4.2参照）。
+        """
+        if not os.path.exists(self._session_file_path):
             return None
-        with open(path, encoding="utf-8") as f:
-            return SessionData.from_dict(json.load(f))
+        try:
+            with open(self._session_file_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("Failed to load session: session_id=%s, error=%s", self.session_id, e)
+            return None
 
-    def update_status(self, session_id: str, status: SessionState) -> None:
-        data = self.get_session(session_id)
-        if data is None:
-            return
-        data.status = status
-        data.updated_at = datetime.now().isoformat()
-        with open(self._session_file(session_id), "w", encoding="utf-8") as f:
-            json.dump(data.to_dict(), f, ensure_ascii=False, indent=2)
+    def save_session(self, session_data: dict) -> None:
+        """更新後のセッション状態辞書をJSONファイルに上書き保存する。
 
+        Args:
+            session_data: 保存するセッション状態辞書
+        """
+        try:
+            with open(self._session_file_path, "w", encoding="utf-8") as f:
+                json.dump(session_data, f, ensure_ascii=False, indent=2)
+            logger.debug("Session saved: session_id=%s", self.session_id)
+        except Exception as e:
+            logger.error("Failed to save session: session_id=%s, error=%s", self.session_id, e, exc_info=True)
 
-class SessionManagerFactory:
+    def update_status(self, new_status: str) -> None:
+        """セッションステータスを更新する。
+
+        Args:
+            new_status: 新しいステータス（CREATED/ACTIVE/WAITING/CLOSED/TERMINATEDのいずれか）
+        """
+        session_data = self.load_session() or {"session_id": self.session_id}
+        session_data["session_status"] = new_status
+        session_data["updated_at"] = datetime.now().isoformat()
+        self.save_session(session_data)
+        logger.info("Session status updated: session_id=%s, status=%s", self.session_id, new_status)
+
+    def delete_session(self) -> None:
+        """セッション終了時（CLOSED/TERMINATED）にセッション状態ファイルを削除する（機微情報保護）。"""
+        if os.path.exists(self._session_file_path):
+            try:
+                os.remove(self._session_file_path)
+                logger.info("Session deleted: session_id=%s", self.session_id)
+            except Exception as e:
+                logger.error("Failed to delete session file: session_id=%s, error=%s", self.session_id, e)
+
     @staticmethod
-    def create(storage_path: str = "data/sessions") -> FileBasedSessionManager:
-        return FileBasedSessionManager(storage_path=storage_path)
+    def generate_session_id() -> str:
+        """一意のセッションIDを生成する。
+
+        Returns:
+            str: `{タイムスタンプ（秒単位）}_{UUID（8文字）}` 形式のセッションID
+            例: 20260323153045_a1b2c3d4
+        """
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        random_part = uuid.uuid4().hex[:8]
+        return f"{timestamp}_{random_part}"

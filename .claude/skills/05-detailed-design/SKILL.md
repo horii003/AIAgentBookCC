@@ -45,8 +45,8 @@ prompt・templateに基づいて作成するスキル。
 | 1 | ツール詳細設計 | DD-01 | `prompts/05_detailed-design/ツール詳細設計.md` | `templates/05_detailed-design/ツール詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/[ツール名]詳細設計.md` |
 | 2 | エージェント詳細設計 | DD-02 | `prompts/05_detailed-design/エージェント詳細設計.md` | `templates/05_detailed-design/エージェント詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/[エージェント名]詳細設計.md` |
 | 3 | ハンドラー詳細設計 | DD-03 | `prompts/05_detailed-design/ハンドラー詳細設計.md` | `templates/05_detailed-design/ハンドラー詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/[ハンドラー名]詳細設計.md` |
-| 4 | ガードレール詳細設計 | DD-04 | `prompts/05_detailed-design/ガードレール詳細設計.md` | `templates/05_detailed-design/ガードレール詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/ガードレール詳細設計.md` |
-| 5 | 評価テスト詳細設計 | DD-05 | `prompts/05_detailed-design/評価テスト詳細設計.md` | `templates/05_detailed-design/評価テスト詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/[評価指標]評価テスト詳細設計.md` |
+| 4 | ガードレール詳細設計 | DD-05 | `prompts/05_detailed-design/ガードレール詳細設計.md` | `templates/05_detailed-design/ガードレール詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/ガードレール詳細設計.md` |
+| 5 | 評価テスト詳細設計 | DD-06 | `prompts/05_detailed-design/評価テスト詳細設計.md` | `templates/05_detailed-design/評価テスト詳細設計テンプレート.md` | `../artifacts/05_detailed-design/outputs/[評価指標]評価テスト詳細設計.md` |
 | 99 | フェーズ品質チェック | DD-PHASE-REVIEW | — | — | `../artifacts/05_detailed-design/reviews/フェーズ品質チェック_review.md` |
 
 ### 依存関係

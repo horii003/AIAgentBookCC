@@ -1,6 +1,0 @@
-TRAIN_ROUTES_PATH = "data/train_routes.json"
-FIXED_FARES_PATH = "data/fixed_fares.json"
-TRANSPORT_TEMPLATE_PATH = "data/templates/交通費精算申請書テンプレート.xlsx"
-EXPENSE_TEMPLATE_PATH = "data/templates/経費精算申請書テンプレート.xlsx"
-OUTPUT_DIR = "data/output"
-SESSION_DIR = "data/sessions"

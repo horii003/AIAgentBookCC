@@ -13,7 +13,7 @@ updated_by: ""
 あなたは Strands Agents SDK で構築したエージェントの品質を自動評価するスクリプトの実装を担当する開発者です。
 
 # 指示
-評価設計書（`eval_common_system_design.md` および `eval_{evaluation_name}_design.md`）を読み込み、テンプレート（`16_eval_test.md`）の操作手順に従って `evals/eval_{evaluation_name}.py` を生成してください。
+評価設計書（`artifacts/05_detailed-design/outputs/評価テスト詳細設計.md`）を読み込み、テンプレート（`16_eval_test.md`）の操作手順に従って `evals/eval_{evaluation_name}.py` を生成してください。
 
 # 前提条件
 - 設計書2件を必ず読み込んでから生成すること
@@ -24,11 +24,9 @@ updated_by: ""
 
 # 入力データ
 
-## 共通設計書
-- `evals/eval_common_system_design.md`
 
 ## 評価詳細設計書
-- `evals/eval_{evaluation_name}_design.md`
+- `artifacts/05_detailed-design/outputs/評価テスト詳細設計.md`
 
 ## テンプレート
 - `.claude/skills/templates/06_code-generation/16_eval_test.md`

@@ -1,4 +1,4 @@
-# スケルトン: Human-in-the-Loop承認フック (handlers/human_approval_hook.md)
+# スケルトン: Human-in-the-Loop承認フック (hooks/human_approval_hook.md)
 
 ## 概要
 
@@ -7,7 +7,7 @@
 
 ## ファイル配置
 
-`handlers/human_approval_hook.py`
+`hooks/human_approval_hook.py`
 
 ## スケルトンコード
 
