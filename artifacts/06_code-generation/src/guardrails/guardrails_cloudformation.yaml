@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "エージェント用ガードレール"
+
+Resources:
+  BedrockGuardrail:
+    Type: AWS::Bedrock::Guardrail
+    Properties:
+      Name: "agent_guardrail"
+      Description: "エージェント用ガードレール"
+
+      BlockedInputMessaging: |
+        申請内容に関係のない入力は受け付けられません。交通費精算申請または経費精算申請についてご入力ください。
+
+      BlockedOutputsMessaging: |
+        申請内容に関係のない入力は受け付けられません。交通費精算申請または経費精算申請についてご入力ください。
+
+      ContentPolicyConfig:
+        ContentFiltersTierConfig:
+          TierName: "STANDARD"
+        FiltersConfig:
+          - Type: "VIOLENCE"
+            InputStrength: "HIGH"
+            OutputStrength: "HIGH"
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "HATE"
+            InputStrength: "HIGH"
+            OutputStrength: "HIGH"
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "SEXUAL"
+            InputStrength: "HIGH"
+            OutputStrength: "HIGH"
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "INSULTS"
+            InputStrength: "HIGH"
+            OutputStrength: "HIGH"
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "MISCONDUCT"
+            InputStrength: "HIGH"
+            OutputStrength: "HIGH"
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "PROMPT_ATTACK"
+            InputStrength: "HIGH"
+            OutputStrength: "NONE"
+            InputAction: "BLOCK"
+
+      WordPolicyConfig:
+        ManagedWordListsConfig:
+          - Type: "PROFANITY"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+      SensitiveInformationPolicyConfig:
+        PiiEntitiesConfig:
+          - Type: "EMAIL"
+            Action: "ANONYMIZE"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "ANONYMIZE"
+            OutputAction: "ANONYMIZE"
+
+          - Type: "PHONE"
+            Action: "ANONYMIZE"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "ANONYMIZE"
+            OutputAction: "ANONYMIZE"
+
+          - Type: "CREDIT_DEBIT_CARD_NUMBER"
+            Action: "BLOCK"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "CREDIT_DEBIT_CARD_CVV"
+            Action: "BLOCK"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "PASSWORD"
+            Action: "BLOCK"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "AWS_ACCESS_KEY"
+            Action: "BLOCK"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+          - Type: "AWS_SECRET_KEY"
+            Action: "BLOCK"
+            InputEnabled: true
+            OutputEnabled: true
+            InputAction: "BLOCK"
+            OutputAction: "BLOCK"
+
+      CrossRegionConfig:
+        GuardrailProfileArn: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail-profile/apac.guardrail.v1:0"
+
+      Tags:
+        - Key: "Name"
+          Value: "agent_guardrail"
+        - Key: "Region"
+          Value: !Ref AWS::Region
+
+Outputs:
+  GuardrailId:
+    Description: "Bedrock Guardrail のリソース ID"
+    Value: !GetAtt BedrockGuardrail.GuardrailId
+    Export:
+      Name: !Sub "${AWS::StackName}-GuardrailId"
+
+  GuardrailVersion:
+    Description: "Bedrock Guardrail のバージョン"
+    Value: !GetAtt BedrockGuardrail.Version
+    Export:
+      Name: !Sub "${AWS::StackName}-GuardrailVersion"
