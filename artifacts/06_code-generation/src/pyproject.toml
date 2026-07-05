@@ -1,0 +1,33 @@
+[project]
+name = "ecaas"
+version = "0.1.0"
+description = "社内申請AIエージェントシステム"
+requires-python = ">=3.10"
+dependencies = [
+    "strands-agents>=0.1.0",
+    "strands-agents-tools>=0.1.0",
+    "strands-agents-builder>=0.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dateutil>=2.8.0",
+    "openpyxl>=3.1.0",
+    "python-dotenv>=1.0.0",
+    "boto3>=1.34.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "evals/*", "sample/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
